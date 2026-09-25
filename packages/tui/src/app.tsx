@@ -976,10 +976,12 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
 
   useBindings(() => ({
     mode: OPENCODE_BASE_MODE,
+    enabled: () => renderer.currentFocusedEditor?.traits?.status !== "FILTER",
     bindings: tuiConfig.keybinds.gather("app", appBindingCommands),
   }))
 
   useBindings(() => ({
+    enabled: () => renderer.currentFocusedEditor?.traits?.status !== "FILTER",
     bindings: tuiConfig.keybinds.gather("app.global", appGlobalBindingCommands),
   }))
 

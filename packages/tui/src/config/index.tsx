@@ -2,7 +2,7 @@ export * as TuiConfig from "."
 
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { Schema } from "effect"
-import { createContext, type JSX, useContext } from "solid-js"
+import { createContext, createSignal, type JSX, useContext } from "solid-js"
 import { TuiKeybind } from "./keybind"
 
 export const AttentionSoundName = Schema.Literals([
@@ -98,9 +98,9 @@ export const ResolveOptions = Schema.Struct({
 })
 export type ResolveOptions = Schema.Schema.Type<typeof ResolveOptions>
 
-export function resolve(input: Info, options: ResolveOptions): Resolved {
-  const keybinds: TuiKeybind.KeybindOverrides = { ...input.keybinds }
-  if (!options.terminalSuspend) {
+export function keybindLookup(overrides: TuiKeybind.KeybindOverrides, terminalSuspend = true) {
+  const keybinds: TuiKeybind.KeybindOverrides = { ...overrides }
+  if (!terminalSuspend) {
     keybinds.terminal_suspend = "none"
     if (keybinds.input_undo === undefined) {
       const inputUndo = TuiKeybind.defaultValue("input_undo")
@@ -110,6 +110,13 @@ export function resolve(input: Info, options: ResolveOptions): Resolved {
     }
   }
 
+  return createBindingLookup(TuiKeybind.toBindingConfig(TuiKeybind.parse(keybinds)), {
+    commandMap: TuiKeybind.CommandMap,
+    bindingDefaults: TuiKeybind.bindingDefaults(),
+  })
+}
+
+export function resolve(input: Info, options: ResolveOptions): Resolved {
   return {
     ...input,
     attention: {
@@ -120,10 +127,7 @@ export function resolve(input: Info, options: ResolveOptions): Resolved {
       sound_pack: input.attention?.sound_pack ?? "opencode.default",
       sounds: input.attention?.sounds ?? {},
     },
-    keybinds: createBindingLookup(TuiKeybind.toBindingConfig(TuiKeybind.parse(keybinds)), {
-      commandMap: TuiKeybind.CommandMap,
-      bindingDefaults: TuiKeybind.bindingDefaults(),
-    }),
+    keybinds: keybindLookup(input.keybinds ?? {}, options.terminalSuspend),
     leader_timeout: input.leader_timeout ?? LeaderTimeoutDefault,
     mouse: input.mouse ?? true,
     cursor: input.cursor
@@ -136,13 +140,36 @@ export function resolve(input: Info, options: ResolveOptions): Resolved {
 }
 
 const ConfigContext = createContext<Resolved>()
+const ApplyKeybindsContext = createContext<(overrides: TuiKeybind.KeybindOverrides) => void>()
 
 export function TuiConfigProvider(props: { config: Resolved; children: JSX.Element }) {
-  return <ConfigContext.Provider value={props.config}>{props.children}</ConfigContext.Provider>
+  const [keybinds, setKeybinds] = createSignal(props.config.keybinds)
+  const suspend = props.config.keybinds.has("terminal.suspend")
+  const applyKeybinds = (overrides: TuiKeybind.KeybindOverrides) => {
+    setKeybinds(keybindLookup(overrides, suspend))
+  }
+  const config = {
+    ...props.config,
+    get keybinds() {
+      return keybinds()
+    },
+  }
+
+  return (
+    <ConfigContext.Provider value={config}>
+      <ApplyKeybindsContext.Provider value={applyKeybinds}>{props.children}</ApplyKeybindsContext.Provider>
+    </ConfigContext.Provider>
+  )
 }
 
 export function useTuiConfig() {
   const value = useContext(ConfigContext)
+  if (!value) throw new Error("TuiConfigProvider is missing")
+  return value
+}
+
+export function useApplyKeybinds() {
+  const value = useContext(ApplyKeybindsContext)
   if (!value) throw new Error("TuiConfigProvider is missing")
   return value
 }
