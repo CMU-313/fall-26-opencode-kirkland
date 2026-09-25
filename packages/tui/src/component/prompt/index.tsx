@@ -47,6 +47,8 @@ import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
+import * as Model from "../../util/model"
+import { effectiveAutoEnabled, getAutoModelLast, AUTO_MODEL_KV_KEY } from "../../util/auto-model"
 import { createFadeIn } from "../../util/signal"
 import { DialogSkill } from "../dialog-skill"
 import { DialogWorkspaceUnavailable } from "../dialog-workspace-unavailable"
@@ -212,6 +214,24 @@ export function Prompt(props: PromptProps) {
   const [cursorVersion, setCursorVersion] = createSignal(0)
   const currentProviderLabel = createMemo(() => local.model.parsed().provider)
   const hasRightContent = createMemo(() => Boolean(props.right))
+
+  // Auto-model footer label: shows "Auto model · <name>" when auto is on.
+  // Reads live from sync.session (updated by session.updated events).
+  const currentSession = createMemo(() => (props.sessionID ? sync.session.get(props.sessionID) : undefined))
+  const isAutoModelEnabled = createMemo(() =>
+    effectiveAutoEnabled(
+      props.sessionID,
+      currentSession(),
+      sync.data.config,
+      kv.get(AUTO_MODEL_KV_KEY, undefined) as boolean | undefined,
+    ),
+  )
+  const autoModelFooterLabel = createMemo(() => {
+    if (!isAutoModelEnabled()) return undefined
+    const last = getAutoModelLast(currentSession())
+    if (!last) return "Auto model"
+    return `Auto model · ${Model.name(sync.data.provider, last.providerID, last.modelID)}`
+  })
 
   function promptModelWarning() {
     toast.show({
@@ -997,6 +1017,7 @@ export function Prompt(props: PromptProps) {
       if (move.pending() && !directory) return false
       finishMoveProgress = Boolean(move.progress())
 
+      const pendingAutoModel = kv.get(AUTO_MODEL_KV_KEY, undefined) as boolean | undefined
       const res = await sdk.client.session.create({
         directory,
         workspace: workspaceID,
@@ -1006,6 +1027,7 @@ export function Prompt(props: PromptProps) {
           id: selectedModel.modelID,
           variant,
         },
+        metadata: pendingAutoModel !== undefined ? { autoModel: { enabled: pendingAutoModel } } : undefined,
       })
 
       if (res.error) {
@@ -1021,6 +1043,10 @@ export function Prompt(props: PromptProps) {
       }
 
       sessionID = res.data.id
+      // Pending value is consumed: clear it so subsequent sessions don't inherit it.
+      if (pendingAutoModel !== undefined) {
+        kv.set(AUTO_MODEL_KV_KEY, undefined)
+      }
     }
 
     const inputText = expandTrackedPastedText(
@@ -1455,13 +1481,29 @@ export function Prompt(props: PromptProps) {
                       <Show when={store.mode === "normal"}>
                         <box flexDirection="row" gap={1}>
                           <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>·</text>
-                          <text
-                            flexShrink={0}
-                            fg={fadeColor(leader() ? theme.textMuted : theme.text, modelMetaAlpha())}
+                          <Show
+                            when={autoModelFooterLabel()}
+                            fallback={
+                              <>
+                                <text
+                                  flexShrink={0}
+                                  fg={fadeColor(leader() ? theme.textMuted : theme.text, modelMetaAlpha())}
+                                >
+                                  {local.model.parsed().model}
+                                </text>
+                                <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabel()}</text>
+                              </>
+                            }
                           >
-                            {local.model.parsed().model}
-                          </text>
-                          <text fg={fadeColor(theme.textMuted, modelMetaAlpha())}>{currentProviderLabel()}</text>
+                            {(label) => (
+                              <text
+                                flexShrink={0}
+                                fg={fadeColor(leader() ? theme.textMuted : theme.text, modelMetaAlpha())}
+                              >
+                                {label()}
+                              </text>
+                            )}
+                          </Show>
                           <Show when={showVariant()}>
                             <text fg={fadeColor(theme.textMuted, variantMetaAlpha())}>·</text>
                             <text>
