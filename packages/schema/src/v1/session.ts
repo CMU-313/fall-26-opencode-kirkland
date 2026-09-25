@@ -61,6 +61,12 @@ export const ContextOverflowError = namedError("ContextOverflowError", {
 export const ContentFilterError = namedError("ContentFilterError", {
   message: Schema.String,
 })
+export const BudgetExceededError = namedError("BudgetExceededError", {
+  message: Schema.String,
+  limit: Schema.Literals(["cost", "tokens"]),
+  max: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  used: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+})
 
 export class OutputFormatText extends Schema.Class<OutputFormatText>("OutputFormatText")({
   type: Schema.Literal("text"),
@@ -390,6 +396,7 @@ const AssistantErrorSchema = Schema.Union([
   StructuredOutputError.EffectSchema,
   ContextOverflowError.EffectSchema,
   ContentFilterError.EffectSchema,
+  BudgetExceededError.EffectSchema,
   APIError.EffectSchema,
 ]).annotate({ discriminator: "name" })
 type AssistantError = Schema.Schema.Type<typeof AssistantErrorSchema>

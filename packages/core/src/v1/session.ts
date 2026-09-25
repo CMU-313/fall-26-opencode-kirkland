@@ -66,3 +66,9 @@ export const ContextOverflowError = NamedError.create("ContextOverflowError", {
   responseBody: Schema.optional(Schema.String),
 })
 export const ContentFilterError = NamedError.create("ContentFilterError", { message: Schema.String })
+export const BudgetExceededError = NamedError.create("BudgetExceededError", {
+  message: Schema.String,
+  limit: Schema.Literals(["cost", "tokens"]),
+  max: Schema.Finite,
+  used: Schema.Finite,
+})
