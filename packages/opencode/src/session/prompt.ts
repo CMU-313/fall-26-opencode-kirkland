@@ -51,10 +51,12 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { Database } from "@opencode-ai/core/database/database"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { eq } from "drizzle-orm"
-import { SessionTable } from "@opencode-ai/core/session/sql"
+import { and, desc, eq, sql } from "drizzle-orm"
+import { MessageTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
+import { AutoModel } from "./auto-model"
+import { TuiEvent } from "@/server/tui-event"
 import { LLMEvent } from "@opencode-ai/llm"
 
 // @ts-ignore
@@ -632,6 +634,31 @@ const layer = Layer.effect(
       return yield* provider.defaultModel().pipe(Effect.orDie)
     })
 
+    // Same measure as the overflow check in runLoop: the newest finished assistant turn, read without hydrating parts.
+    const lastContextTokens = Effect.fnUntraced(function* (sessionID: SessionID) {
+      const row = yield* db
+        .select({ data: MessageTable.data })
+        .from(MessageTable)
+        .where(
+          and(
+            eq(MessageTable.session_id, sessionID),
+            sql`json_extract(${MessageTable.data}, '$.role') = 'assistant'`,
+            sql`json_extract(${MessageTable.data}, '$.finish') is not null`,
+          ),
+        )
+        .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+        .limit(1)
+        .get()
+        .pipe(Effect.orDie)
+      // The overflow check ignores compaction summaries too: their tokens describe the history before compaction.
+      // The column type omits id/sessionID from the message union, which drops the role discrimination.
+      const data = row?.data as SessionV1.Info | undefined
+      if (data?.role !== "assistant" || data.summary) return undefined
+      return (
+        data.tokens.total || data.tokens.input + data.tokens.output + data.tokens.cache.read + data.tokens.cache.write
+      )
+    })
+
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
       const agentName = input.agent
       const ag = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
@@ -643,7 +670,48 @@ const layer = Layer.effect(
         throw error
       }
 
-      const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
+      const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
+      const base = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
+      // Routing must never break a prompt. A failure before the metadata write falls back to the base model; after
+      // it the routed model is committed, so a failing log or toast is reported without changing the model.
+      const routingError = <E>(cause: Cause.Cause<E>) => {
+        // A cancelled prompt must stay cancelled, not fall back to the base model.
+        if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause)
+        const error = Cause.squash(cause)
+        return Effect.logWarning("autoModel.error", {
+          "session.id": input.sessionID,
+          error: error instanceof Error ? error.message : String(error),
+        }).pipe(Effect.as(undefined))
+      }
+      const decision = yield* Effect.gen(function* () {
+        const cfg = yield* config.get()
+        const decision = AutoModel.route({
+          parts: input.parts,
+          agent: ag,
+          session: current,
+          noReply: input.noReply,
+          base: { ...base, variant: input.variant },
+          providers: yield* provider.list(),
+          config: cfg.autoModel,
+          lastContextTokens: yield* lastContextTokens(input.sessionID),
+        })
+        if (decision.metadata) yield* sessions.setMetadata({ sessionID: input.sessionID, metadata: decision.metadata })
+        return decision
+      }).pipe(Effect.catchCause(routingError))
+      yield* Effect.gen(function* () {
+        if (decision?.log) yield* Effect.logInfo("autoModel.route", decision.log)
+        if (decision?.toast)
+          yield* events.publish(TuiEvent.ToastShow, {
+            title: "Auto model",
+            message: decision.toast,
+            variant: "info",
+            duration: 5000,
+          })
+      }).pipe(Effect.catchCause(routingError))
+      const routed = decision?.model
+      const model = routed
+        ? { providerID: ProviderV2.ID.make(routed.providerID), modelID: ModelV2.ID.make(routed.modelID) }
+        : base
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
       const full =
         !input.variant && ag.variant && same
@@ -651,7 +719,9 @@ const layer = Layer.effect(
               .getModel(model.providerID, model.modelID)
               .pipe(Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeed(undefined)))
           : undefined
-      const variant = input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined)
+      const variant = routed
+        ? routed.variant
+        : (input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined))
 
       const info: SessionV1.User = {
         id: input.messageID ?? MessageID.ascending(),
@@ -669,7 +739,6 @@ const layer = Layer.effect(
         format: input.format,
       }
 
-      const current = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
       if (
         current.agent !== info.agent ||
         current.model?.providerID !== info.model.providerID ||
