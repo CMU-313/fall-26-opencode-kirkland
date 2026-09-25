@@ -1,7 +1,8 @@
 import { stringifyKeyStroke } from "@opentui/keymap"
-import { createEffect, createMemo, onCleanup } from "solid-js"
+import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TuiKeybind } from "../config/keybind"
+import { clearKeybind, loadKeybinds, setKeybind } from "../config/keybind-persist"
 import { useApplyKeybinds, useTuiConfig } from "../config"
 import {
   COMMAND_PALETTE_COMMAND,
@@ -28,6 +29,10 @@ export function DialogKeybinds() {
     capture: null as string | null,
     pendingLeader: false,
     selected: "",
+  })
+
+  onMount(() => {
+    void loadKeybinds().then((overlay) => setStore("overlay", overlay))
   })
 
   const entries = useKeymapSelector((keymap: OpenTuiKeymap) => {
@@ -81,11 +86,15 @@ export function DialogKeybinds() {
       })
       return
     }
-    const overlay = { ...store.overlay, [name]: value }
-    setStore("overlay", overlay)
-    applyKeybinds(overlay)
-    setStore({ capture: null, pendingLeader: false })
-    toast.show({ message: "Keybind saved", variant: "success" })
+    void setKeybind(name, value)
+      .then(() => {
+        const overlay = { ...store.overlay, [name]: value }
+        setStore("overlay", overlay)
+        applyKeybinds(overlay)
+        setStore({ capture: null, pendingLeader: false })
+        toast.show({ message: "Keybind saved", variant: "success" })
+      })
+      .catch((error) => toast.error(error))
   }
 
   const resetSelected = () => {
@@ -94,20 +103,28 @@ export function DialogKeybinds() {
       toast.show({ message: "Shortcut is already the default", variant: "info" })
       return
     }
-    const overlay = Object.fromEntries(Object.entries(store.overlay).filter(([key]) => key !== name))
-    setStore("overlay", overlay)
-    applyKeybinds(overlay)
-    toast.show({ message: "Shortcut reset to default", variant: "success" })
+    void clearKeybind(name)
+      .then(() => {
+        const overlay = Object.fromEntries(Object.entries(store.overlay).filter(([key]) => key !== name))
+        setStore("overlay", overlay)
+        applyKeybinds(overlay)
+        toast.show({ message: "Shortcut reset to default", variant: "success" })
+      })
+      .catch((error) => toast.error(error))
   }
 
   const resetAll = () => {
     const names = options()
       .map((item) => item.value)
       .filter((name) => name in store.overlay)
-    const overlay = Object.fromEntries(Object.entries(store.overlay).filter(([key]) => !names.includes(key)))
-    setStore("overlay", overlay)
-    applyKeybinds(overlay)
-    toast.show({ message: "Keyboard shortcuts have been reset to defaults.", variant: "success" })
+    void Promise.all(names.map(clearKeybind))
+      .then(() => {
+        const overlay = Object.fromEntries(Object.entries(store.overlay).filter(([key]) => !names.includes(key)))
+        setStore("overlay", overlay)
+        applyKeybinds(overlay)
+        toast.show({ message: "Keyboard shortcuts have been reset to defaults.", variant: "success" })
+      })
+      .catch((error) => toast.error(error))
   }
 
   const stopCapture = keymap.intercept(
