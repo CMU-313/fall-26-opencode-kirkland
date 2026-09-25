@@ -1,5 +1,5 @@
 import { stringifyKeyStroke } from "@opentui/keymap"
-import { createMemo, onCleanup } from "solid-js"
+import { createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TuiKeybind } from "../config/keybind"
 import { useApplyKeybinds, useTuiConfig } from "../config"
@@ -65,6 +65,12 @@ export function DialogKeybinds() {
     }),
   )
 
+  createEffect(() => {
+    if (store.selected) return
+    const first = options()[0]?.value
+    if (first) setStore("selected", first)
+  })
+
   const save = (name: string, value: string) => {
     const conflict = conflictFor(name, value, store.overlay, options().map((item) => item.value))
     if (conflict) {
@@ -83,8 +89,8 @@ export function DialogKeybinds() {
   }
 
   const resetSelected = () => {
-    const name = store.selected
-    if (!(name in store.overlay)) {
+    const name = store.selected || options()[0]?.value
+    if (!name || isDefaultShortcut(name, store.overlay, config, options())) {
       toast.show({ message: "Shortcut is already the default", variant: "info" })
       return
     }
@@ -176,6 +182,24 @@ function displayLeader(overlay: Record<string, string>, config: ReturnType<typeo
 function formatStored(value: string, overlay: Record<string, string>, config: ReturnType<typeof useTuiConfig>) {
   if (value === "none") return "none"
   return value.replaceAll("<leader>", `${displayLeader(overlay, config)} `)
+}
+
+function storedDefault(name: string) {
+  const value = TuiKeybind.defaultValue(name as keyof typeof TuiKeybind.Definitions)
+  if (typeof value === "string") return value
+  if (value === false) return "none"
+  return "none"
+}
+
+function isDefaultShortcut(
+  name: string,
+  overlay: Record<string, string>,
+  config: ReturnType<typeof useTuiConfig>,
+  listed: { value: string; footer: string }[],
+) {
+  const expected = formatStored(storedDefault(name), overlay, config) || "none"
+  if (typeof overlay[name] === "string") return formatStored(overlay[name], overlay, config) === expected
+  return (listed.find((item) => item.value === name)?.footer || "none") === expected
 }
 
 function leaderChord(overlay: Record<string, string>, config: ReturnType<typeof useTuiConfig>) {
