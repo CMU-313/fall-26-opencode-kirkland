@@ -46,6 +46,7 @@ import { DialogStatus } from "./component/dialog-status"
 import { DialogDebug } from "./component/dialog-debug"
 import { DialogThemeList } from "./component/dialog-theme-list"
 import { DialogHelp } from "./ui/dialog-help"
+import { DialogKeybinds } from "./component/dialog-keybinds"
 import { DialogAgent } from "./component/dialog-agent"
 import { DialogSessionList } from "./component/dialog-session-list"
 import { DialogWorkspaceList } from "./component/dialog-workspace-list"
@@ -124,6 +125,7 @@ const appBindingCommands = [
   "theme.switch_mode",
   "theme.mode.lock",
   "help.show",
+  "keybinds.edit",
   "docs.open",
   "diff.open",
   "workspace.list",
@@ -812,6 +814,15 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         slashName: "help",
         run: () => {
           dialog.replace(() => <DialogHelp />)
+        },
+        category: "System",
+      },
+      {
+        name: "keybinds.edit",
+        title: "Edit keybinds",
+        slashName: "keybinds",
+        run: () => {
+          dialog.replace(() => <DialogKeybinds />)
         },
         category: "System",
       },
