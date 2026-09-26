@@ -10,6 +10,7 @@ import { SplitBorder } from "../../ui/border"
 import { useSync } from "../../context/sync"
 import { useProject } from "../../context/project"
 import { filetype } from "../../util/filetype"
+import { getRevertDiffFiles } from "../../util/revert-diff"
 import { Locale } from "../../util/locale"
 import { webSearchProviderLabel } from "../../util/tool-display"
 import { getScrollAcceleration } from "../../util/scroll"
@@ -34,6 +35,14 @@ function EditBody(props: { request: PermissionRequest }) {
     const value = props.request.metadata?.diff
     return typeof value === "string" ? value : ""
   })
+  const stats = createMemo(() => {
+    const files = getRevertDiffFiles(diff())
+    return {
+      files: files.length,
+      additions: files.reduce((sum, file) => sum + file.additions, 0),
+      deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+    }
+  })
 
   const view = createMemo(() => {
     const diffStyle = config.diff_style
@@ -46,6 +55,15 @@ function EditBody(props: { request: PermissionRequest }) {
 
   return (
     <box flexDirection="column" gap={1}>
+      <Show when={stats().files > 0}>
+        <box flexDirection="row" gap={1} paddingLeft={1} flexShrink={0}>
+          <text fg={theme.textMuted}>
+            {stats().files} {stats().files === 1 ? "file" : "files"} ·
+          </text>
+          <text fg={theme.diffHighlightAdded}>+{stats().additions}</text>
+          <text fg={theme.diffHighlightRemoved}>−{stats().deletions}</text>
+        </box>
+      </Show>
       <Show when={diff()}>
         <scrollbox
           height="100%"
@@ -116,8 +134,6 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
     stage: "permission" as PermissionStage,
   })
   const pathFormatter = usePathFormatter()
-
-  const session = createMemo(() => sync.data.session.find((s) => s.id === props.request.sessionID))
 
   const input = createMemo(() => {
     const tool = props.request.tool
@@ -411,16 +427,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
                   return
                 }
                 if (option === "reject") {
-                  if (session()?.parentID) {
-                    setStore("stage", "reject")
-                    return
-                  }
-                  void sdk.client.permission.reply({
-                    reply: "reject",
-                    requestID: props.request.id,
-                    directory: props.directory,
-                    workspace: project.workspace.current(),
-                  })
+                  setStore("stage", "reject")
                   return
                 }
                 void sdk.client.permission.reply({
@@ -483,7 +490,7 @@ function RejectPrompt(props: { onConfirm: (message: string) => void; onCancel: (
           <text fg={theme.text}>Reject permission</text>
         </box>
         <box paddingLeft={1}>
-          <text fg={theme.textMuted}>Tell OpenCode what to do differently</text>
+          <text fg={theme.textMuted}>Tell OpenCode what to change (leave empty to just reject)</text>
         </box>
       </box>
       <box
