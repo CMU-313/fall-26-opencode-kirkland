@@ -82,6 +82,7 @@ import {
 
 import type { EventSource } from "./context/sdk"
 import { DialogVariant } from "./component/dialog-variant"
+import { DialogPermissions } from "./component/dialog-permissions"
 import { createTuiAttention } from "./attention"
 import * as TuiAudio from "./audio"
 import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"
@@ -962,6 +963,17 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         run: () => {
           local.permission.toggle()
           dialog.clear()
+        },
+      },
+      {
+        name: "permission.edit_approval",
+        title: "Change code change approval",
+        category: "System",
+        slashName: "permissions",
+        run: () => {
+          dialog.replace(() => (
+            <DialogPermissions sessionID={route.data.type === "session" ? route.data.sessionID : undefined} />
+          ))
         },
       },
     ].map((command) => ({
