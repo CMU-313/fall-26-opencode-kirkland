@@ -40,6 +40,12 @@ import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import type { AssistantMessage, FilePart, UserMessage } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../util/locale"
 import { errorMessage } from "../../util/error"
+import {
+  EDIT_APPROVAL_DEFAULT_KEY,
+  editApprovalMode,
+  editApprovalSession,
+  parseEditApprovalMode,
+} from "../../util/edit-approval"
 import { formatDuration } from "../../util/format"
 import { createColors, createFrames } from "../../ui/spinner"
 import { useDialog } from "../../ui/dialog"
@@ -171,6 +177,12 @@ export function Prompt(props: PromptProps) {
   const dimensions = useTerminalDimensions()
   const { theme, syntax } = useTheme()
   const kv = useKV()
+  // Before a session exists, show the default that the next session will start with.
+  const editApproval = createMemo(() =>
+    props.sessionID
+      ? editApprovalMode(sync.session.get(props.sessionID))
+      : parseEditApprovalMode(kv.get(EDIT_APPROVAL_DEFAULT_KEY)),
+  )
   const animationsEnabled = createMemo(() => kv.get("animations_enabled", true))
   const list = createMemo(() => props.placeholders?.normal ?? [])
   const shell = createMemo(() => props.placeholders?.shell ?? [])
@@ -997,6 +1009,7 @@ export function Prompt(props: PromptProps) {
       if (move.pending() && !directory) return false
       finishMoveProgress = Boolean(move.progress())
 
+      const editDefault = parseEditApprovalMode(kv.get(EDIT_APPROVAL_DEFAULT_KEY))
       const res = await sdk.client.session.create({
         directory,
         workspace: workspaceID,
@@ -1006,6 +1019,7 @@ export function Prompt(props: PromptProps) {
           id: selectedModel.modelID,
           variant,
         },
+        ...(editDefault ? editApprovalSession(editDefault) : {}),
       })
 
       if (res.error) {
@@ -1451,6 +1465,9 @@ export function Prompt(props: PromptProps) {
                       </text>
                       <Show when={store.mode === "normal" && local.permission.mode === "auto"}>
                         <text fg={fadeColor(theme.textMuted, agentMetaAlpha())}>auto</text>
+                      </Show>
+                      <Show when={store.mode === "normal" && editApproval()}>
+                        {(mode) => <text fg={fadeColor(theme.textMuted, agentMetaAlpha())}>edits: {mode()}</text>}
                       </Show>
                       <Show when={store.mode === "normal"}>
                         <box flexDirection="row" gap={1}>
