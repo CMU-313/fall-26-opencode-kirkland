@@ -166,6 +166,19 @@ export const Info = Schema.Struct({
       }),
     }),
   ),
+  autoModel: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.optional(Schema.Boolean).annotate({
+        description: "Route primary-agent prompts to a model tier by prompt complexity (default: false)",
+      }),
+      freeOnly: Schema.optional(Schema.Boolean).annotate({
+        description: "Only route to free models (e.g. OpenRouter ':free' models)",
+      }),
+      exclude: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+        description: "provider/model IDs to never route to; simple * globs allowed",
+      }),
+    }),
+  ).annotate({ description: "Automatic model routing by prompt complexity" }),
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),
