@@ -30,9 +30,11 @@ export function DialogBudget() {
       onConfirm={(value) => {
         const tokens = parseTokens(value)
         if (tokens === undefined) return
-        void sdk.client.config.update({
-          config: { budget: { ...sync.data.config.budget, tokens, action: sync.data.config.budget?.action ?? "ask" } },
-        })
+        const budget = { ...sync.data.config.budget, tokens, action: sync.data.config.budget?.action ?? "ask" }
+        // Write globally: Config.update targets <project>/config.json, which the
+        // project config loader never reads back, so the budget would be ignored.
+        void sdk.client.global.config.update({ config: { budget } })
+        sync.set("config", "budget", budget)
         dialog.clear()
       }}
       onCancel={() => dialog.clear()}
