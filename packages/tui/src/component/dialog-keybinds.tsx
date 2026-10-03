@@ -1,12 +1,11 @@
 import { stringifyKeyStroke } from "@opentui/keymap"
-import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TuiKeybind } from "../config/keybind"
 import { clearKeybind, loadKeybinds, setKeybind } from "../config/keybind-persist"
 import { useApplyKeybinds, useTuiConfig } from "../config"
 import {
   COMMAND_PALETTE_COMMAND,
-  formatKeyBindings,
   type OpenTuiKeymap,
   useBindings,
   useKeymapSelector,
@@ -24,15 +23,15 @@ export function DialogKeybinds() {
   const applyKeybinds = useApplyKeybinds()
   const keymap = useOpencodeKeymap()
   const toast = useToast()
+  const [overlay, setOverlay] = createSignal({} as Record<string, string>)
   const [store, setStore] = createStore({
-    overlay: {} as Record<string, string>,
     capture: null as string | null,
     pendingLeader: false,
     selected: "",
   })
 
   onMount(() => {
-    void loadKeybinds().then((overlay) => setStore("overlay", overlay))
+    void loadKeybinds().then(setOverlay)
   })
 
   const entries = useKeymapSelector((keymap: OpenTuiKeymap) => {
@@ -55,7 +54,7 @@ export function DialogKeybinds() {
     entries().flatMap((entry) => {
       const name = definitionFor(entry.command.name)
       if (!name) return []
-      const custom = store.overlay[name]
+      const custom = overlay()[name]
       return [
         {
           title: typeof entry.command.title === "string" ? entry.command.title : entry.command.name,
@@ -63,8 +62,8 @@ export function DialogKeybinds() {
           category: typeof entry.command.category === "string" ? entry.command.category : "General",
           footer:
             typeof custom === "string"
-              ? formatStored(custom, store.overlay, config)
-              : formatKeyBindings(entry.bindings, config) || "none",
+              ? formatStored(custom, overlay(), config)
+              : formatStored(storedDefault(name), overlay(), config) || "none",
         },
       ]
     }),
@@ -77,7 +76,7 @@ export function DialogKeybinds() {
   })
 
   const save = (name: string, value: string) => {
-    const conflict = conflictFor(name, value, store.overlay, options().map((item) => item.value))
+    const conflict = conflictFor(name, value, overlay(), options().map((item) => item.value))
     if (conflict) {
       toast.show({
         title: "Shortcut already in use",
@@ -88,9 +87,9 @@ export function DialogKeybinds() {
     }
     void setKeybind(name, value)
       .then(() => {
-        const overlay = { ...store.overlay, [name]: value }
-        setStore("overlay", overlay)
-        applyKeybinds(overlay)
+        const next = { ...overlay(), [name]: value }
+        setOverlay(next)
+        applyKeybinds(next)
         setStore({ capture: null, pendingLeader: false })
         toast.show({ message: "Keybind saved", variant: "success" })
       })
@@ -99,15 +98,15 @@ export function DialogKeybinds() {
 
   const resetSelected = () => {
     const name = store.selected || options()[0]?.value
-    if (!name || isDefaultShortcut(name, store.overlay, config, options())) {
+    if (!name || isDefaultShortcut(name, overlay(), config, options())) {
       toast.show({ message: "Shortcut is already the default", variant: "info" })
       return
     }
     void clearKeybind(name)
       .then(() => {
-        const overlay = Object.fromEntries(Object.entries(store.overlay).filter(([key]) => key !== name))
-        setStore("overlay", overlay)
-        applyKeybinds(overlay)
+        const next = Object.fromEntries(Object.entries(overlay()).filter(([key]) => key !== name))
+        setOverlay(next)
+        applyKeybinds(next)
         toast.show({ message: "Shortcut reset to default", variant: "success" })
       })
       .catch((error) => toast.error(error))
@@ -116,12 +115,12 @@ export function DialogKeybinds() {
   const resetAll = () => {
     const names = options()
       .map((item) => item.value)
-      .filter((name) => name in store.overlay)
+      .filter((name) => name in overlay())
     void Promise.all(names.map(clearKeybind))
       .then(() => {
-        const overlay = Object.fromEntries(Object.entries(store.overlay).filter(([key]) => !names.includes(key)))
-        setStore("overlay", overlay)
-        applyKeybinds(overlay)
+        const next = Object.fromEntries(Object.entries(overlay()).filter(([key]) => !names.includes(key)))
+        setOverlay(next)
+        applyKeybinds(next)
         toast.show({ message: "Keyboard shortcuts have been reset to defaults.", variant: "success" })
       })
       .catch((error) => toast.error(error))
@@ -149,7 +148,7 @@ export function DialogKeybinds() {
         save(name, `<leader>${event.name}`)
         return
       }
-      if (next === leaderChord(store.overlay, config)) {
+      if (next === leaderChord(overlay(), config)) {
         setStore("pendingLeader", true)
         return
       }
