@@ -1,4 +1,5 @@
 import type { Agent } from "@/agent/agent"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import type { Provider } from "@/provider/provider"
 import { AutoModelClassify, TIERS, type Tier } from "@/session/auto-model-classify"
 import { AutoModelHysteresis } from "@/session/auto-model-hysteresis"
@@ -8,6 +9,14 @@ import type { SessionPrompt } from "@/session/prompt"
 // A routed model must fit the last turn's context with room to grow: the next turn re-sends it plus the new prompt
 // and the reply.
 export const CONTEXT_BUFFER = 1.2
+
+// How long a provider that failed for lack of funds has its paid models skipped. Long enough to stop re-hitting it every prompt, short
+// enough that topping up the account brings it back without a restart.
+export const OUT_OF_FUNDS_TTL = 30 * 60 * 1000
+
+// Providers report billing failures inconsistently: some use 402, others a 400/403 with a message in the body.
+const OUT_OF_FUNDS_PATTERN =
+  /insufficient[ _-]?(?:funds|credits?|balance|quota)|credit balance is too low|out of credits|payment required|exceeded your current quota|billing hard limit/i
 
 type ModelRef = { providerID: string; modelID: string; variant?: string }
 type LogValue = string | number | boolean | string[]
@@ -33,6 +42,9 @@ export function route(input: {
   providers: Record<string, Provider.Info>
   config: { enabled?: boolean; freeOnly?: boolean; exclude?: string[] } | undefined
   lastContextTokens?: number
+  // Provider IDs known to be out of funds. Credits are per account, so every paid model of the provider is skipped;
+  // its free models still work.
+  outOfFunds?: string[]
 }): Decision {
   const auto = readAutoModel(input.session.metadata)
   const enabled = typeof auto.enabled === "boolean" ? auto.enabled : (input.config?.enabled ?? false)
@@ -117,7 +129,17 @@ function skipReason(input: Parameters<typeof route>[0]) {
 function routingFilters(input: Parameters<typeof route>[0]) {
   const minContext = (input.lastContextTokens ?? 0) * CONTEXT_BUFFER
   const needsImage = input.parts.some((part) => part.type === "file" && part.mime.startsWith("image/"))
+  const outOfFunds = input.outOfFunds ?? []
   return [
+    ...(outOfFunds.length > 0
+      ? [
+          {
+            name: "funds",
+            keep: (candidate: AutoModelTiers.Candidate) =>
+              !outOfFunds.includes(candidate.providerID) || AutoModelTiers.isFree(candidate.model),
+          },
+        ]
+      : []),
     ...(minContext > 0
       ? [
           {
@@ -132,6 +154,12 @@ function routingFilters(input: Parameters<typeof route>[0]) {
       ? [{ name: "image", keep: (candidate: AutoModelTiers.Candidate) => candidate.model.capabilities.input.image }]
       : []),
   ]
+}
+
+export function isOutOfFunds(error: unknown) {
+  if (!SessionV1.APIError.isInstance(error)) return false
+  if (error.data.statusCode === 402) return true
+  return OUT_OF_FUNDS_PATTERN.test(error.data.message) || OUT_OF_FUNDS_PATTERN.test(error.data.responseBody ?? "")
 }
 
 // The target tier, then the tiers above it (nearest first), then the tiers below it (nearest first).
