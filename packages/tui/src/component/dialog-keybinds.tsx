@@ -24,6 +24,7 @@ export function DialogKeybinds() {
   const keymap = useOpencodeKeymap()
   const toast = useToast()
   const [overlay, setOverlay] = createSignal({} as Record<string, string>)
+  const [query, setQuery] = createSignal("")
   const [store, setStore] = createStore({
     capture: null as string | null,
     pendingLeader: false,
@@ -68,6 +69,8 @@ export function DialogKeybinds() {
       ]
     }),
   )
+
+  const listed = createMemo(() => options().filter((item) => matchesWords(query(), item.title, item.category)))
 
   createEffect(() => {
     if (store.selected) return
@@ -170,9 +173,11 @@ export function DialogKeybinds() {
   return (
     <DialogSelect
       title={store.capture ? "Press keys" : "Keyboard shortcuts"}
-      options={options()}
+      options={listed()}
+      skipFilter
       locked={!!store.capture}
       current={store.selected}
+      onFilter={setQuery}
       onMove={(option) => setStore("selected", option.value)}
       onSelect={(option) => setStore({ capture: option.value, pendingLeader: false })}
       footerHints={[
@@ -181,6 +186,16 @@ export function DialogKeybinds() {
       ]}
     />
   )
+}
+
+function matchesWords(query: string, ...fields: string[]) {
+  const needles = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (needles.length === 0) return true
+  const words = fields.flatMap((field) => field.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))
+  return needles.every((needle) => words.some((word) => word.startsWith(needle)))
 }
 
 function definitionFor(command: string) {
