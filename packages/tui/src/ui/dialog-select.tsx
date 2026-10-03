@@ -114,6 +114,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 
   let input: InputRenderable
+  let seedingFilter = false
 
   const actions = createMemo(() => props.actions ?? [])
   const shownActions = createMemo(() => actions().filter((item) => !item.hidden))
@@ -570,8 +571,10 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         <Show when={props.renderFilter !== false}>
           <box paddingTop={1}>
             <input
+              value={store.filter}
               onInput={(e) => {
                 if (props.locked) return
+                if (seedingFilter && e === "" && store.filter) return
                 batch(() => {
                   setStore("filter", e)
                   props.onFilter?.(e)
@@ -584,9 +587,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               ref={(r) => {
                 input = r
                 input.traits = { status: "FILTER" }
+                seedingFilter = true
+                input.value = store.filter
                 setTimeout(() => {
+                  seedingFilter = false
                   if (!input) return
                   if (input.isDestroyed) return
+                  if (store.filter && input.value !== store.filter) input.value = store.filter
                   input.focus()
                 }, 1)
               }}

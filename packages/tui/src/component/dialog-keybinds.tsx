@@ -27,6 +27,7 @@ export function DialogKeybinds() {
   const toast = useToast()
   const { theme } = useTheme()
   const [overlay, setOverlay] = createSignal({} as Record<string, string>)
+  const [order, setOrder] = createSignal<string[]>([])
   const [store, setStore] = createStore({
     capture: null as string | null,
     captureTitle: "",
@@ -54,7 +55,7 @@ export function DialogKeybinds() {
     }))
   })
 
-  const options = createMemo(() =>
+  const rows = createMemo(() =>
     entries().flatMap((entry) => {
       const name = definitionFor(entry.command.name)
       if (!name) return []
@@ -72,6 +73,29 @@ export function DialogKeybinds() {
       ]
     }),
   )
+
+  createEffect(() => {
+    if (order().length) return
+    const names = rows().map((item) => item.value)
+    if (names.length) setOrder(names)
+  })
+
+  const options = createMemo(() => {
+    const list = rows()
+    const frozen = order()
+    if (!frozen.length) return list
+    const byName = new Map(list.map((item) => [item.value, item]))
+    const used = new Set<string>()
+    return [
+      ...frozen.flatMap((name) => {
+        const item = byName.get(name)
+        if (!item) return []
+        used.add(name)
+        return [item]
+      }),
+      ...list.filter((item) => !used.has(item.value)),
+    ]
+  })
 
   createEffect(() => {
     if (store.selected) return
@@ -94,7 +118,7 @@ export function DialogKeybinds() {
         const next = { ...overlay(), [name]: value }
         setOverlay(next)
         applyKeybinds(next)
-        setStore({ capture: null, captureTitle: "", pendingLeader: false })
+        setStore({ capture: null, captureTitle: "", pendingLeader: false, selected: name })
         toast.show({ message: "Keybind saved", variant: "success" })
       })
       .catch((error) => toast.error(error))
@@ -186,6 +210,7 @@ export function DialogKeybinds() {
           </box>
         ) : undefined
       }
+      preserveSelection
       current={store.selected}
       onMove={(option) => setStore("selected", option.value)}
       onSelect={(option) =>
