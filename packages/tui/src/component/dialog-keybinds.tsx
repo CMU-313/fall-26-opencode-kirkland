@@ -33,6 +33,7 @@ export function DialogKeybinds() {
     captureTitle: "",
     pendingLeader: false,
     selected: "",
+    lastReset: "",
   })
 
   onMount(() => {
@@ -106,7 +107,6 @@ export function DialogKeybinds() {
   const save = (name: string, value: string) => {
     if (value !== "none" && interruptsTyping(value)) {
       toast.show({
-        title: "Shortcut needs a modifier",
         message: `Use ctrl, alt, or the leader key (${displayLeader(overlay(), config)}) so it does not fire while typing.`,
         variant: "warning",
       })
@@ -115,7 +115,6 @@ export function DialogKeybinds() {
     const conflict = conflictFor(name, value, overlay(), options().map((item) => item.value))
     if (conflict) {
       toast.show({
-        title: "Shortcut already in use",
         message: `${value} is already assigned to ${conflict}.`,
         variant: "warning",
       })
@@ -126,8 +125,12 @@ export function DialogKeybinds() {
         const next = { ...overlay(), [name]: value }
         setOverlay(next)
         applyKeybinds(next)
+        const title = store.captureTitle || options().find((item) => item.value === name)?.title || name
         setStore({ capture: null, captureTitle: "", pendingLeader: false, selected: name })
-        toast.show({ message: "Keybind saved", variant: "success" })
+        toast.show({
+          message: `${title} keybind updated to ${formatStored(value, next, config) || "none"}`,
+          variant: "success",
+        })
       })
       .catch((error) => toast.error(error))
   }
@@ -135,6 +138,7 @@ export function DialogKeybinds() {
   const resetSelected = () => {
     const name = store.selected || options()[0]?.value
     if (!name || isDefaultShortcut(name, overlay(), config, options())) {
+      if (store.lastReset === name) return
       toast.show({ message: "Shortcut is already the default", variant: "info" })
       return
     }
@@ -143,6 +147,7 @@ export function DialogKeybinds() {
         const next = Object.fromEntries(Object.entries(overlay()).filter(([key]) => key !== name))
         setOverlay(next)
         applyKeybinds(next)
+        setStore("lastReset", name)
         toast.show({ message: "Shortcut reset to default", variant: "success" })
       })
       .catch((error) => toast.error(error))
@@ -226,7 +231,7 @@ export function DialogKeybinds() {
       }
       preserveSelection
       current={store.selected}
-      onMove={(option) => setStore("selected", option.value)}
+      onMove={(option) => setStore({ selected: option.value, lastReset: "" })}
       onSelect={(option) =>
         setStore({ capture: option.value, captureTitle: option.title, pendingLeader: false })
       }
