@@ -33,7 +33,6 @@ export function DialogKeybinds() {
     captureTitle: "",
     pendingLeader: false,
     selected: "",
-    lastReset: "",
   })
 
   onMount(() => {
@@ -112,6 +111,13 @@ export function DialogKeybinds() {
       })
       return
     }
+    if (value === "ctrl+r" || value === "ctrl+shift+r") {
+      toast.show({
+        message: `${value} is reserved for ${value === "ctrl+r" ? "Reset" : "Reset all"}.`,
+        variant: "warning",
+      })
+      return
+    }
     const conflict = conflictFor(name, value, overlay(), options().map((item) => item.value))
     if (conflict) {
       toast.show({
@@ -138,7 +144,6 @@ export function DialogKeybinds() {
   const resetSelected = () => {
     const name = store.selected || options()[0]?.value
     if (!name || isDefaultShortcut(name, overlay(), config, options())) {
-      if (store.lastReset === name) return
       toast.show({ message: "Shortcut is already the default", variant: "info" })
       return
     }
@@ -147,7 +152,6 @@ export function DialogKeybinds() {
         const next = Object.fromEntries(Object.entries(overlay()).filter(([key]) => key !== name))
         setOverlay(next)
         applyKeybinds(next)
-        setStore("lastReset", name)
         toast.show({ message: "Shortcut reset to default", variant: "success" })
       })
       .catch((error) => toast.error(error))
@@ -231,7 +235,7 @@ export function DialogKeybinds() {
       }
       preserveSelection
       current={store.selected}
-      onMove={(option) => setStore({ selected: option.value, lastReset: "" })}
+      onMove={(option) => setStore("selected", option.value)}
       onSelect={(option) =>
         setStore({ capture: option.value, captureTitle: option.title, pendingLeader: false })
       }
