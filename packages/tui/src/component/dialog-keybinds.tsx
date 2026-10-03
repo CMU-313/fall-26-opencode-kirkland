@@ -104,6 +104,14 @@ export function DialogKeybinds() {
   })
 
   const save = (name: string, value: string) => {
+    if (value !== "none" && interruptsTyping(value)) {
+      toast.show({
+        title: "Shortcut needs a modifier",
+        message: `Use ctrl, alt, or the leader key (${displayLeader(overlay(), config)}) so it does not fire while typing.`,
+        variant: "warning",
+      })
+      return
+    }
     const conflict = conflictFor(name, value, overlay(), options().map((item) => item.value))
     if (conflict) {
       toast.show({
@@ -172,12 +180,12 @@ export function DialogKeybinds() {
       }
       const next = recordChord(event)
       if (!next) return
-      if (store.pendingLeader) {
-        save(name, `<leader>${event.name}`)
-        return
-      }
       if (next === leaderChord(overlay(), config)) {
         setStore("pendingLeader", true)
+        return
+      }
+      if (store.pendingLeader) {
+        save(name, `<leader>${event.name}`)
         return
       }
       save(name, next)
@@ -197,7 +205,13 @@ export function DialogKeybinds() {
 
   return (
     <DialogSelect
-      title={store.capture ? "Press a new shortcut" : "Keyboard shortcuts"}
+      title={
+        store.capture
+          ? store.pendingLeader
+            ? `Press a key after ${displayLeader(overlay(), config)}`
+            : "Press a new shortcut"
+          : "Keyboard shortcuts"
+      }
       options={store.capture ? [] : options()}
       renderFilter={!store.capture}
       locked={!!store.capture}
@@ -276,6 +290,15 @@ function recordChord(event: { name: string; ctrl?: boolean; shift?: boolean; met
   if (event.shift) parts.push("shift")
   parts.push(event.name)
   return parts.join("+")
+}
+
+function interruptsTyping(value: string) {
+  return signatures(value).some((chord) => {
+    if (chord.includes("<leader>")) return false
+    if (/(^|\+)(ctrl|alt|meta|super)(\+|$)/.test(chord)) return false
+    const key = chord.split("+").at(-1) ?? chord
+    return key.length === 1 || ["space", "return", "enter", "tab", "backspace"].includes(key)
+  })
 }
 
 function signatures(value: unknown): string[] {
