@@ -141,3 +141,118 @@ describe("AutoModel routing", () => {
     expect(route({ text: COMPLEX_PROMPT, config: { freeOnly: true } }).model?.modelID).toBe("model-3:free")
   })
 })
+
+describe("AutoModel logging", () => {
+  test("logs the complexity analysis and the reason for the selected model", () => {
+    const log = route({ text: COMPLEX_PROMPT }).log
+    expect(log).toMatchObject({
+      "session.id": "ses_test",
+      baseModel: "openai/model-6",
+      action: "route",
+      reason: "initial",
+      fromTier: "none",
+      toTier: "complex",
+      usedTier: "complex",
+      fallback: "none",
+      score: 6,
+      model: "openai/model-6",
+      referencePrice: 6,
+      candidates: 7,
+      excluded: 0,
+      switched: true,
+    })
+    expect(log?.signals).toEqual(
+      expect.arrayContaining(["keyword:refactor(+3)", "keyword:migrate(+3)", "keyword:architecture(+3)"]),
+    )
+  })
+
+  test("logs why a downgrade is being held back", () => {
+    const first = route({ text: COMPLEX_PROMPT })
+    expect(route({ session: { id: "ses_test", metadata: first.metadata } }).log).toMatchObject({
+      fromTier: "complex",
+      toTier: "complex",
+      streak: 1,
+      reason: "lower-streak:1/3",
+    })
+  })
+
+  test("logs why routing was skipped", () => {
+    expect(route({ agent: { mode: "subagent" } }).log).toMatchObject({ action: "skip", reason: "subagent" })
+  })
+})
+
+describe("AutoModel filters", () => {
+  test("skips models whose context would not fit the last turn and falls back to a higher tier", () => {
+    const small = makeProvider({
+      "model-1": { limit: { context: 1000, output: 100 } },
+      "model-2": { limit: { context: 1000, output: 100 } },
+    })
+    const decision = route({ providers: { [small.id]: small }, lastContextTokens: 1000 })
+    expect(decision.model?.modelID).toBe("model-3:free")
+    expect(decision.log?.filters).toEqual(["context>=1200"])
+    expect(decision.log?.fallback).toBe("simple-empty")
+  })
+
+  test("keeps models with unknown context size", () => {
+    const unknown = makeProvider({ "model-1": { limit: { context: 0, output: 100 } } })
+    expect(route({ providers: { [unknown.id]: unknown }, lastContextTokens: 1_000_000 }).model?.modelID).toBe(
+      "model-1",
+    )
+  })
+
+  test("requires image input when the prompt attaches an image", () => {
+    const capabilities = ProviderTest.model().capabilities
+    const vision = makeProvider({
+      "model-4": { capabilities: { ...capabilities, input: { ...capabilities.input, image: true } } },
+    })
+    const decision = route({
+      parts: [
+        { type: "text", text: "hi" },
+        { type: "file", mime: "image/png", url: "data:image/png;base64," },
+      ],
+      providers: { [vision.id]: vision },
+    })
+    expect(decision.model?.modelID).toBe("model-4")
+    expect(decision.log?.filters).toEqual(["image"])
+  })
+
+  test("skips but still advances hysteresis state when nothing is routable", () => {
+    const decision = route({ providers: {} })
+    expect(decision.action).toBe("skip")
+    expect(decision.model).toBeUndefined()
+    expect(decision.log?.reason).toBe("no-candidates")
+    expect(decision.metadata).toEqual({
+      autoModel: { enabled: true, state: { tier: "simple", streak: 0, streakTiers: [] } },
+    })
+  })
+})
+
+describe("AutoModel out of funds", () => {
+  test("simple prompt picks the cheapest model", () => {
+    expect(route().model?.modelID).toBe("model-1")
+  })
+
+  test("skips every paid model of a provider that is out of funds", () => {
+    expect(route({ outOfFunds: [provider.id] }).model?.modelID).toBe("model-3:free")
+  })
+
+  test("routes normally when an unrelated provider is out of funds", () => {
+    expect(route({ outOfFunds: ["other"] }).model?.modelID).toBe("model-1")
+  })
+
+  test("detects billing errors", () => {
+    const error = (data: { message: string; statusCode?: number; responseBody?: string }) =>
+      new SessionV1.APIError({ isRetryable: false, ...data }).toObject()
+    expect(AutoModel.isOutOfFunds(error({ message: "Payment Required", statusCode: 402 }))).toBe(true)
+    expect(
+      AutoModel.isOutOfFunds(error({ message: "Bad Request", responseBody: '{"error":"Insufficient credits"}' })),
+    ).toBe(true)
+    expect(
+      AutoModel.isOutOfFunds(
+        error({ message: "Insufficient credits. This account never purchased credits.", statusCode: 402 }),
+      ),
+    ).toBe(true)
+    expect(AutoModel.isOutOfFunds(error({ message: "Bad Request", statusCode: 400 }))).toBe(false)
+    expect(AutoModel.isOutOfFunds(undefined)).toBe(false)
+  })
+})
