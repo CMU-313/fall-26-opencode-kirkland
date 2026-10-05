@@ -146,7 +146,10 @@ const layer = Layer.effect(
 
     // Stops the turn when the session has spent its configured budget. Returns
     // true when the caller should break out of the loop.
-    const enforceBudget = Effect.fn("SessionPrompt.budget")(function* (sessionID: SessionID) {
+    const enforceBudget = Effect.fn("SessionPrompt.budget")(function* (
+      sessionID: SessionID,
+      lastUser: SessionV1.User,
+    ) {
       const budget = (yield* config.get()).budget
       if (!budget) return false
 
@@ -178,7 +181,29 @@ const layer = Layer.effect(
         }
       }
 
+      // Record the stop on an assistant message. The turn ends before any model
+      // request, so without this the transcript shows a prompt with no reply and
+      // no explanation once the error event is gone.
+      const ctx = yield* InstanceState.context
       const error = new SessionV1.BudgetExceededError({ message: SessionBudget.describe(hit), ...hit }).toObject()
+      const now = Date.now()
+      yield* sessions.updateMessage({
+        id: MessageID.ascending(),
+        parentID: lastUser.id,
+        role: "assistant",
+        mode: lastUser.agent,
+        agent: lastUser.agent,
+        variant: lastUser.model.variant,
+        path: { cwd: ctx.directory, root: ctx.worktree },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: lastUser.model.modelID,
+        providerID: lastUser.model.providerID,
+        time: { created: now, completed: now },
+        sessionID,
+        finish: "error",
+        error,
+      })
       yield* Effect.logInfo("budget exceeded", { "session.id": sessionID, limit: hit.limit, used: hit.used })
       yield* events.publish(Session.Event.Error, { sessionID, error })
       return true
@@ -1172,7 +1197,7 @@ const layer = Layer.effect(
             break
           }
 
-          if (yield* enforceBudget(sessionID)) break
+          if (yield* enforceBudget(sessionID, lastUser)) break
 
           step++
           if (step === 1)
