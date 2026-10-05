@@ -28,6 +28,7 @@ export function DialogKeybinds() {
   const { theme } = useTheme()
   const [overlay, setOverlay] = createSignal({} as Record<string, string>)
   const [order, setOrder] = createSignal<string[]>([])
+  const [query, setQuery] = createSignal("")
   const [store, setStore] = createStore({
     capture: null as string | null,
     captureTitle: "",
@@ -96,6 +97,8 @@ export function DialogKeybinds() {
       ...list.filter((item) => !used.has(item.value)),
     ]
   })
+
+  const listed = createMemo(() => options().filter((item) => matchesWords(query(), item.title, item.category)))
 
   createEffect(() => {
     if (store.selected) return
@@ -221,7 +224,8 @@ export function DialogKeybinds() {
             : "Press a new shortcut"
           : "Keyboard shortcuts"
       }
-      options={store.capture ? [] : options()}
+      options={store.capture ? [] : listed()}
+      skipFilter
       renderFilter={!store.capture}
       locked={!!store.capture}
       emptyView={
@@ -235,6 +239,7 @@ export function DialogKeybinds() {
       }
       preserveSelection
       current={store.selected}
+      onFilter={setQuery}
       onMove={(option) => setStore("selected", option.value)}
       onSelect={(option) =>
         setStore({ capture: option.value, captureTitle: option.title, pendingLeader: false })
@@ -249,6 +254,16 @@ export function DialogKeybinds() {
       }
     />
   )
+}
+
+function matchesWords(query: string, ...fields: string[]) {
+  const needles = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (needles.length === 0) return true
+  const words = fields.flatMap((field) => field.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))
+  return needles.every((needle) => words.some((word) => word.startsWith(needle)))
 }
 
 function definitionFor(command: string) {
