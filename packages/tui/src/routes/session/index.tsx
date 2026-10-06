@@ -2004,7 +2004,7 @@ export function InlineToolRow(props: {
 }
 
 // Shows whether the user approved or rejected a code change, from the decision the server recorded.
-function ApprovalBadge(props: { part?: ToolPart }) {
+export function ApprovalBadge(props: { part?: ToolPart }) {
   const { theme } = useTheme()
   const badge = createMemo(() => approvalBadge(props.part?.metadata))
   return (

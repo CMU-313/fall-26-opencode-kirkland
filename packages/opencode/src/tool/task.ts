@@ -159,6 +159,9 @@ export const TaskTool = Tool.define(
           parentID: ctx.sessionID,
           title: params.description + ` (@${next.name} subagent)`,
           agent: next.name,
+          // Subagents follow the parent's code change approval mode (set by the TUI's /permissions).
+          metadata:
+            parent.metadata?.edit_approval === undefined ? undefined : { edit_approval: parent.metadata.edit_approval },
           permission: [
             ...childPermission,
             ...childToolDenies.filter(

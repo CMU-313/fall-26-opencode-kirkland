@@ -2444,14 +2444,25 @@ noLLMServer.instance(
 // Code change approval: the edit tool asks before writing, and the user's decision is recorded
 // on the tool part's metadata.approval so the timeline can show it.
 
-const editSession = Effect.fn("test.editSession")(function* (edit: "ask" | "allow") {
+// `mode` is the TUI's /permissions choice, stored in session metadata. "plan" mirrors plan mode's rules: edits are
+// denied except plan files, which keeps the edit tool visible so the permission check decides.
+const editSession = Effect.fn("test.editSession")(function* (
+  edit: "ask" | "allow" | "plan",
+  mode?: "always" | "simple" | "never",
+) {
   const sessions = yield* Session.Service
   return yield* sessions.create({
     title: "Edit approval",
     permission: [
       { permission: "*", pattern: "*", action: "allow" },
-      { permission: "edit", pattern: "*", action: edit },
+      ...(edit === "plan"
+        ? [
+            { permission: "edit", pattern: "*", action: "deny" as const },
+            { permission: "edit", pattern: ".opencode/plans/*.md", action: "allow" as const },
+          ]
+        : [{ permission: "edit", pattern: "*", action: edit }]),
     ],
+    metadata: mode ? { edit_approval: mode } : undefined,
   })
 })
 
@@ -2473,12 +2484,15 @@ const editPart = Effect.fn("test.editPart")(function* (sessionID: SessionID) {
     .find((part): part is SessionV1.ToolPart => part.type === "tool" && part.tool === "edit")
 })
 
-const startEdit = Effect.fn("test.startEdit")(function* (edit: "ask" | "allow") {
+const startEdit = Effect.fn("test.startEdit")(function* (
+  edit: "ask" | "allow" | "plan",
+  mode?: "always" | "simple" | "never",
+) {
   const { dir, llm } = yield* useServerConfig(providerCfg)
   const prompt = yield* SessionPrompt.Service
   const file = path.join(dir, "a.ts")
   yield* writeText(file, "let x = 1\n")
-  const session = yield* editSession(edit)
+  const session = yield* editSession(edit, mode)
   yield* prompt.prompt({
     sessionID: session.id,
     agent: "build",
@@ -2589,4 +2603,146 @@ it.instance(
     }),
   { git: true },
   30_000,
+)
+
+// /permissions modes: the server applies the session's edit_approval as an override that never beats deny rules.
+
+it.instance(
+  "edit approval mode - never applies edits without asking even when rules ask",
+  () =>
+    Effect.gen(function* () {
+      const { file, llm, session } = yield* startEdit("ask", "never")
+      const prompt = yield* SessionPrompt.Service
+      const permission = yield* Permission.Service
+      yield* llm.text("done")
+
+      yield* prompt.loop({ sessionID: session.id })
+
+      expect(yield* permission.list()).toHaveLength(0)
+      expect((yield* editPart(session.id))?.metadata?.approval).toMatchObject({ decision: "auto" })
+      expect(yield* readText(file)).toBe("const x = 1\n")
+    }),
+  { git: true },
+  30_000,
+)
+
+it.instance(
+  "edit approval mode - always asks even when rules allow",
+  () =>
+    Effect.gen(function* () {
+      const { file, llm, session } = yield* startEdit("allow", "always")
+      const prompt = yield* SessionPrompt.Service
+      const permission = yield* Permission.Service
+      yield* llm.text("done")
+
+      const fiber = yield* prompt.loop({ sessionID: session.id }).pipe(Effect.forkChild)
+      const request = yield* waitForEditRequest()
+      expect(yield* readText(file)).toBe("let x = 1\n")
+      yield* permission.reply({ requestID: request.id, reply: "once" })
+      yield* Fiber.join(fiber)
+
+      expect((yield* editPart(session.id))?.metadata?.approval).toMatchObject({ decision: "approved" })
+      expect(yield* readText(file)).toBe("const x = 1\n")
+    }),
+  { git: true },
+  30_000,
+)
+
+for (const mode of ["never", "always", "simple"] as const) {
+  it.instance(
+    `edit approval mode - ${mode} does not override deny rules such as plan mode`,
+    () =>
+      Effect.gen(function* () {
+        const { file, llm, session } = yield* startEdit("plan", mode)
+        const prompt = yield* SessionPrompt.Service
+        const permission = yield* Permission.Service
+        yield* llm.text("ok")
+
+        yield* prompt.loop({ sessionID: session.id })
+
+        const part = yield* editPart(session.id)
+        expect(part?.state.status).toBe("error")
+        // A deny rule is not a user decision, so no approval badge is recorded.
+        expect(part?.metadata?.approval).toBeUndefined()
+        expect(yield* permission.list()).toHaveLength(0)
+        expect(yield* readText(file)).toBe("let x = 1\n")
+      }),
+    { git: true },
+    30_000,
+  )
+}
+
+it.instance(
+  "edit approval - rejecting a write leaves the file uncreated and records the rejection",
+  () =>
+    Effect.gen(function* () {
+      const { dir, llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const permission = yield* Permission.Service
+      const file = path.join(dir, "hello.ts")
+      const session = yield* editSession("ask")
+      yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        noReply: true,
+        parts: [{ type: "text", text: "add a hello script" }],
+      })
+      yield* llm.tool("write", { filePath: file, content: 'console.log("hello")\n', summary: "Add a hello script." })
+      yield* llm.text("ok")
+
+      const fiber = yield* prompt.loop({ sessionID: session.id }).pipe(Effect.forkChild)
+      const request = yield* waitForEditRequest()
+      expect(request.metadata.diff).toContain('+console.log("hello")')
+      expect(request.metadata.summary).toBe("Add a hello script.")
+      yield* permission.reply({ requestID: request.id, reply: "reject", message: "not now" })
+      yield* Fiber.join(fiber)
+
+      const msgs = yield* MessageV2.filterCompactedEffect(session.id)
+      const part = msgs
+        .flatMap((msg) => msg.parts)
+        .find((part): part is SessionV1.ToolPart => part.type === "tool" && part.tool === "write")
+      expect(part?.metadata?.approval).toMatchObject({ decision: "rejected", feedback: "not now" })
+      expect(yield* Effect.promise(() => Bun.file(file).exists())).toBe(false)
+    }),
+  { git: true },
+  30_000,
+)
+
+it.instance(
+  "edit approval mode - subagent sessions inherit the parent's mode",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* editSession("allow", "never")
+      yield* llm.tool("task", {
+        description: "inspect bug",
+        prompt: "look into the cache key path",
+        subagent_type: "general",
+      })
+      yield* llm.hang
+      yield* user(chat.id, "hello")
+
+      const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+      const childID = yield* pollWithTimeout(
+        Effect.gen(function* () {
+          const msgs = yield* MessageV2.filterCompactedEffect(chat.id)
+          const tool = msgs
+            .flatMap((msg) => msg.parts)
+            .find((part): part is SessionV1.ToolPart => part.type === "tool" && part.tool === "task")
+          const id = tool?.state.status === "running" ? tool.state.metadata?.sessionId : undefined
+          return typeof id === "string" ? id : undefined
+        }),
+        "timed out waiting for the subagent session",
+      )
+
+      const child = yield* sessions.get(SessionID.make(childID))
+      expect(child.parentID).toBe(chat.id)
+      expect(child.metadata?.edit_approval).toBe("never")
+
+      yield* prompt.cancel(chat.id)
+      yield* Fiber.await(fiber)
+    }),
+  10_000,
 )

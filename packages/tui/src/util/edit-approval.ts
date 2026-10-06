@@ -1,4 +1,4 @@
-import type { PermissionRuleset, Session } from "@opencode-ai/sdk/v2"
+import type { Session } from "@opencode-ai/sdk/v2"
 import { getRevertDiffFiles } from "./revert-diff"
 import { isRecord } from "./record"
 
@@ -46,11 +46,17 @@ export function approvalBadge(metadata: unknown) {
   return undefined
 }
 
-// Session fields that apply a mode. Session rules are appended after agent rules, so this rule wins.
+// Session fields that apply a mode. The server reads metadata.edit_approval and turns it into an ask/allow
+// override that never beats deny rules (plan mode, config denies), so no permission rule is added.
 export function editApprovalSession(mode: EditApprovalMode, metadata?: Record<string, unknown>) {
-  const permission: PermissionRuleset = [{ permission: "edit", pattern: "*", action: mode === "never" ? "allow" : "ask" }]
   const next: Record<string, unknown> = { ...metadata, edit_approval: mode }
-  return { metadata: next, permission }
+  return { metadata: next }
+}
+
+// Fields for a newly created session from the saved default mode; with no valid default, the config decides.
+export function newSessionApproval(stored: unknown) {
+  const mode = parseEditApprovalMode(stored)
+  return mode ? editApprovalSession(mode) : {}
 }
 
 // A simple edit changes one existing file by at most SIMPLE_EDIT_MAX_LINES lines.

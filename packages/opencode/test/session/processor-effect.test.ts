@@ -4,7 +4,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { expect } from "bun:test"
 import { tool } from "ai"
-import { Cause, Effect, Exit, Fiber, Layer, Stream } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schedule, Stream } from "effect"
 import path from "path"
 import z from "zod"
 import type { Agent } from "../../src/agent/agent"
@@ -225,6 +225,32 @@ const fragmentFailureLLM = Layer.succeed(
 )
 const fragmentFailureEnv = LayerNode.compile(root, [...replacements, [LLM.node, fragmentFailureLLM]])
 const itFragmentFailure = testEffect(fragmentFailureEnv)
+
+// Pauses between tool-input-start and tool-call so a test can record an approval first, like an auto-approved edit
+// whose tool runs before the processor handles the tool-call event.
+let toolCallGate: Deferred.Deferred<void> | undefined
+const gatedToolCallLLM = Layer.succeed(
+  LLM.Service,
+  LLM.Service.of({
+    stream: () =>
+      Stream.make(LLMEvent.stepStart({ index: 0 }), LLMEvent.toolInputStart({ id: "call-1", name: "edit" })).pipe(
+        Stream.concat(
+          Stream.unwrap(
+            Deferred.await(toolCallGate!).pipe(
+              Effect.as(
+                Stream.make(
+                  LLMEvent.toolCall({ id: "call-1", name: "edit", input: { filePath: "a.ts" } }),
+                  LLMEvent.stepFinish({ index: 0, reason: "stop" }),
+                  LLMEvent.finish({ reason: "stop" }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+  }),
+)
+const itGatedToolCall = testEffect(LayerNode.compile(root, [...replacements, [LLM.node, gatedToolCallLLM]]))
 
 const boot = Effect.fn("test.boot")(function* () {
   const processors = yield* SessionProcessor.Service
@@ -1108,6 +1134,59 @@ itFragmentFailure.live("session.processor effect tests retain partial legacy par
         expect(seen).toContain(MessageV2.Event.PartUpdated.type)
         expect(seen).toContain(Session.Event.Error.type)
         expect(seen.filter((type) => type.startsWith("session.next."))).toEqual([])
+      }),
+    { config: cfg },
+  ),
+)
+
+itGatedToolCall.live("session.processor effect tests keep a recorded approval when the tool-call event lands later", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const { processors, session, provider } = yield* boot()
+        toolCallGate = yield* Deferred.make<void>()
+
+        const chat = yield* session.create({})
+        const parent = yield* user(chat.id, "edit a.ts")
+        const msg = yield* assistant(chat.id, parent.id, path.resolve(dir))
+        const mdl = yield* provider.getModel(ref.providerID, ref.modelID)
+        const handle = yield* processors.create({ assistantMessage: msg, sessionID: chat.id, model: mdl })
+
+        const fiber = yield* handle
+          .process({
+            user: {
+              id: parent.id,
+              sessionID: chat.id,
+              role: "user",
+              time: parent.time,
+              agent: parent.agent,
+              model: { providerID: ref.providerID, modelID: ref.modelID },
+            } satisfies SessionV1.User,
+            sessionID: chat.id,
+            model: mdl,
+            agent: agent(),
+            system: [],
+            messages: [{ role: "user", content: "edit a.ts" }],
+            tools: {},
+          })
+          .pipe(Effect.forkChild)
+
+        // Wait for the tool part, then record an approval before the tool-call event is processed.
+        yield* Effect.gen(function* () {
+          const parts = yield* MessageV2.parts(msg.id)
+          if (!parts.some((part) => part.type === "tool")) return yield* Effect.fail("waiting for tool part")
+        }).pipe(Effect.retry({ times: 200, schedule: Schedule.spaced("10 millis") }))
+        yield* handle.updateToolCall("call-1", (part) => ({
+          ...part,
+          metadata: { ...part.metadata, approval: { decision: "auto", time: 1 } },
+        }))
+        yield* Deferred.succeed(toolCallGate, undefined)
+        yield* Fiber.join(fiber)
+
+        const call = (yield* MessageV2.parts(msg.id)).find(
+          (part): part is SessionV1.ToolPart => part.type === "tool",
+        )
+        expect(call?.metadata?.approval).toEqual({ decision: "auto", time: 1 })
       }),
     { config: cfg },
   ),

@@ -12,8 +12,12 @@ export const Event = PermissionV1.Event
 // How an ask was settled: "auto" when rules allowed it without prompting, otherwise the user's approval reply.
 export type Outcome = "auto" | "once" | "always"
 
+// `mode` is a session approval override: "allow" skips prompts and "ask" forces them. It never overrides a deny
+// rule, and never re-asks for patterns the user already approved with "Allow always".
+export type AskInput = PermissionV1.AskInput & { readonly mode?: "ask" | "allow" }
+
 export interface Interface {
-  readonly ask: (input: PermissionV1.AskInput) => Effect.Effect<Outcome, PermissionV1.Error>
+  readonly ask: (input: AskInput) => Effect.Effect<Outcome, PermissionV1.Error>
   readonly reply: (input: PermissionV1.ReplyInput) => Effect.Effect<void, PermissionV1.NotFoundError>
   readonly list: () => Effect.Effect<ReadonlyArray<PermissionV1.Request>>
 }
@@ -67,9 +71,9 @@ const layer = Layer.effect(
       }),
     )
 
-    const ask = Effect.fn("Permission.ask")(function* (input: PermissionV1.AskInput) {
+    const ask = Effect.fn("Permission.ask")(function* (input: AskInput) {
       const { approved, pending } = yield* InstanceState.get(state)
-      const { ruleset, ...request } = input
+      const { ruleset, mode, ...request } = input
       let needsAsk = false
 
       for (const pattern of request.patterns) {
@@ -80,7 +84,8 @@ const layer = Layer.effect(
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
         }
-        if (rule.action === "allow") continue
+        const action = mode && !approved.includes(rule) ? mode : rule.action
+        if (action === "allow") continue
         needsAsk = true
       }
 
@@ -198,6 +203,14 @@ export function fromConfig(permission: ConfigPermissionV1.Info) {
     )
   }
   return ruleset
+}
+
+// Maps the edit approval mode a client stores in session metadata (the TUI's /permissions) to an ask override.
+export function editMode(metadata: Record<string, unknown> | undefined) {
+  const mode = metadata?.edit_approval
+  if (mode === "never") return "allow" as const
+  if (mode === "always" || mode === "simple") return "ask" as const
+  return undefined
 }
 
 export function merge(...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule[] {
