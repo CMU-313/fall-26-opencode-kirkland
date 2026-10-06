@@ -58,8 +58,18 @@ $  Session budget reached
 Approving raises the ceiling by one more budget, so a `1000000` token cap asks again at
 `2000000` rather than on every subsequent request. Declining ends the turn.
 
-While a budget is set, the sidebar shows a **Budget** panel with usage against the cap and
-the percentage used, which turns yellow at 80% and red at 100%.
+At 80% of the cap you get a warning notification before anything stops, so there is a
+chance to wrap up or raise the limit:
+
+```
+Budget warning: 812,480 of 1,000,000 used
+```
+
+It fires once per ceiling rather than on every request, and fires again after an approval
+raises the ceiling.
+
+While a budget is set, the sidebar also shows a **Budget** panel with usage against the cap
+and the percentage used, which turns yellow at 80% and red at 100%.
 
 ### Use a token budget on free models
 
@@ -100,6 +110,8 @@ percentage climb, then send a **second** prompt in the same session. The check r
 each model request, so a single one-shot reply finishes the turn before the next check; the
 second prompt is where the limit fires.
 
+Watch for the warning notification as usage passes 80% of the cap, before the stop fires.
+
 Set `"action": "ask"` and repeat to see the approval prompt. Approve it to continue with a
 raised ceiling, or decline to end the turn.
 
@@ -107,15 +119,20 @@ raised ceiling, or decline to end the turn.
 
 **Limit logic** — [`packages/opencode/test/session/budget.test.ts`](packages/opencode/test/session/budget.test.ts)
 
-Nine tests over the pure functions in
+Fifteen tests over the pure functions in
 [`packages/opencode/src/session/budget.ts`](packages/opencode/src/session/budget.ts):
 token totalling across all five counters, being under the limit, reaching it exactly,
 exceeding it, the token limit independently of cost, cost taking precedence when both are
 exceeded, the ceiling raised by an approval, and a zero limit.
 
+Six of those cover the 80% warning threshold specifically: staying quiet below it, firing at
+it, staying quiet at or past the limit where the stop takes over instead, picking whichever
+limit is closest to being reached, following a ceiling raised by an approval, and doing
+nothing when no budget is set.
+
 **Enforcement in the agent loop** — [`packages/opencode/test/session/prompt.test.ts`](packages/opencode/test/session/prompt.test.ts) (the "Budget semantics" section)
 
-Six integration tests that run the real session loop:
+Eight integration tests that run the real session loop:
 
 - a token budget stops the turn before any model request
 - a cost budget does the same
@@ -125,6 +142,8 @@ Six integration tests that run the real session loop:
   actually reached
 - declining the approval prompt ends the turn
 - approving it lets the loop reach the model
+- crossing 80% warns exactly once, and a second turn at the same ceiling does not warn again
+- a budget written to config is still there after a config reload
 
 **Input parsing** — [`packages/tui/test/component/dialog-budget.test.ts`](packages/tui/test/component/dialog-budget.test.ts)
 
@@ -150,6 +169,10 @@ found the stop left no record in the transcript; it now guards against that regr
 The parser tests cover the only user-supplied input in the feature, which is where malformed
 values could otherwise be written into config.
 
+The config-retention test exists for a specific reason. An earlier version of `/budget` wrote
+to a file the config loader never reads, so the cap silently vanished and the session ran
+unbounded. That was found by hand; this test would have caught it.
+
 ### Known limitations
 
 - **Budgets are per session.** Subagents run in their own sessions with their own caps, so a
@@ -158,4 +181,6 @@ values could otherwise be written into config.
   configured limit.
 - **A budget of `0` combined with `"action": "ask"`** cannot be raised by approving, since
   the ceiling is a multiple of the limit. It prompts before every request.
+- **The 80% warning cannot fire for a budget of `0`**, for the same reason — there is no room
+  between 80% and the limit.
 - **Removing a budget** requires editing the config file; `/budget` only sets one.
