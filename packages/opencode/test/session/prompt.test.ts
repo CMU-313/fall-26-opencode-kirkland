@@ -860,6 +860,63 @@ it.instance("approving the budget lets the loop reach the model", () =>
   }),
 )
 
+it.instance("warns once when usage crosses 80 percent of the budget", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      budget: { tokens: 10_000, action: "stop" },
+    }))
+    const events = yield* EventV2Bridge.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+
+    // A step-finish part is what the projector accumulates onto the session, so
+    // writing one puts recorded usage at 80% of the cap without a real turn.
+    const seeded = yield* user(chat.id, "seed usage")
+    yield* sessions.updatePart({
+      id: PartID.ascending(),
+      messageID: seeded.id,
+      sessionID: chat.id,
+      type: "step-finish",
+      reason: "stop",
+      tokens: { input: 8_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0,
+    })
+
+    const warnings: string[] = []
+    yield* events.listen((event) => {
+      if (event.type === "session.budget.warning") warnings.push(event.type)
+      return Effect.void
+    })
+
+    yield* llm.text("world")
+    yield* prompt.loop({ sessionID: chat.id })
+    expect(warnings).toHaveLength(1)
+
+    // A second turn at the same ceiling must not warn again.
+    yield* user(chat.id, "again")
+    yield* llm.text("world again")
+    yield* prompt.loop({ sessionID: chat.id })
+    expect(warnings).toHaveLength(1)
+  }),
+)
+
+it.instance("retains a configured budget when config is reloaded", () =>
+  Effect.gen(function* () {
+    const { directory: dir } = yield* TestInstance
+    const config = yield* Config.Service
+
+    yield* writeConfig(dir, { budget: { tokens: 123_456, action: "ask" } })
+    yield* config.invalidate()
+
+    expect((yield* config.get()).budget).toEqual({ tokens: 123_456, action: "ask" })
+  }),
+)
+
 noLLMServer.instance.skip(
   "prompt emits v2 prompted and synthetic events (v2 projector disabled)",
   () =>
