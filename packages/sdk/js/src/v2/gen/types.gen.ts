@@ -51,6 +51,7 @@ export type Event =
   | EventMessagePartDelta
   | EventSessionDiff
   | EventSessionError
+  | EventSessionBudgetWarning
   | EventInstallationUpdated
   | EventInstallationUpdateAvailable
   | EventFileEdited
@@ -1235,6 +1236,16 @@ export type GlobalEvent = {
             | ContentFilterError
             | BudgetExceededError
             | ApiError
+        }
+      }
+    | {
+        id: string
+        type: "session.budget.warning"
+        properties: {
+          sessionID: string
+          limit: "cost" | "tokens"
+          max: number
+          used: number
         }
       }
     | {
@@ -2916,6 +2927,7 @@ export type V2Event =
   | MessagePartDelta
   | SessionDiff
   | SessionError
+  | SessionBudgetWarning
   | InstallationUpdated
   | InstallationUpdateAvailable
   | FileEdited
@@ -5383,6 +5395,26 @@ export type SessionError = {
   }
 }
 
+export type SessionBudgetWarning = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.budget.warning"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    limit: "cost" | "tokens"
+    max: number
+    used: number
+  }
+}
+
 export type InstallationUpdated = {
   id: string
   metadata?: {
@@ -6706,6 +6738,17 @@ export type EventSessionError = {
       | ContentFilterError
       | BudgetExceededError
       | ApiError
+  }
+}
+
+export type EventSessionBudgetWarning = {
+  id: string
+  type: "session.budget.warning"
+  properties: {
+    sessionID: string
+    limit: "cost" | "tokens"
+    max: number
+    used: number
   }
 }
 
