@@ -53,6 +53,10 @@ export const Parameters = Schema.Struct({
   replaceAll: Schema.optional(Schema.Boolean).annotate({
     description: "Replace all occurrences of oldString (default false)",
   }),
+  summary: Schema.optional(Schema.String).annotate({
+    description:
+      "One sentence explaining what this change does and why. Shown to the user when they are asked to approve the change.",
+  }),
 })
 
 export const EditTool = Tool.define(
@@ -106,6 +110,7 @@ export const EditTool = Tool.define(
                   metadata: {
                     filepath: filePath,
                     diff,
+                    summary: params.summary,
                   },
                 })
                 yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
@@ -149,6 +154,7 @@ export const EditTool = Tool.define(
                 metadata: {
                   filepath: filePath,
                   diff,
+                  summary: params.summary,
                 },
               })
 

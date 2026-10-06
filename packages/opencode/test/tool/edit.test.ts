@@ -572,3 +572,50 @@ describe("tool.edit", () => {
     )
   })
 })
+
+describe("tool.edit approval summary", () => {
+  const capture = () => {
+    const asks: Parameters<Tool.Context["ask"]>[0][] = []
+    const next: Tool.Context = {
+      ...ctx,
+      ask: (input) =>
+        Effect.sync(() => {
+          asks.push(input)
+        }),
+    }
+    return { asks, next }
+  }
+
+  it.instance("passes the model's summary to the edit permission request", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const filepath = path.join(test.directory, "summary.txt")
+      yield* put(filepath, "let x = 1\n")
+      const { asks, next } = capture()
+
+      yield* run(
+        { filePath: filepath, oldString: "let", newString: "const", summary: "Make x a constant." },
+        next,
+      )
+
+      const edit = asks.filter((ask) => ask.permission === "edit")
+      expect(edit).toHaveLength(1)
+      expect(edit[0].metadata.summary).toBe("Make x a constant.")
+      expect(edit[0].metadata.diff).toContain("+const x = 1")
+    }),
+  )
+
+  it.instance("leaves the summary out when the model does not provide one", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const filepath = path.join(test.directory, "nosummary.txt")
+      const { asks, next } = capture()
+
+      yield* run({ filePath: filepath, oldString: "", newString: "hello" }, next)
+
+      const edit = asks.filter((ask) => ask.permission === "edit")
+      expect(edit).toHaveLength(1)
+      expect(edit[0].metadata.summary).toBeUndefined()
+    }),
+  )
+})

@@ -17,6 +17,10 @@ import * as Bom from "@/util/bom"
 
 export const Parameters = Schema.Struct({
   patchText: Schema.String.annotate({ description: "The full patch text that describes all changes to be made" }),
+  summary: Schema.optional(Schema.String).annotate({
+    description:
+      "One sentence explaining what this change does and why. Shown to the user when they are asked to approve the change.",
+  }),
 })
 
 export const ApplyPatchTool = Tool.define(
@@ -211,6 +215,7 @@ export const ApplyPatchTool = Tool.define(
           filepath: relativePaths.join(", "),
           diff: totalDiff,
           files,
+          summary: params.summary,
         },
       })
 

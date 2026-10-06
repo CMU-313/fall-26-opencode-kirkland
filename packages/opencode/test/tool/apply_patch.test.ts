@@ -46,6 +46,7 @@ type AskInput = {
       deletions: number
       movePath?: string
     }>
+    summary?: string
   }
 }
 
@@ -53,7 +54,10 @@ type ToolCtx = typeof baseCtx & {
   ask: (input: AskInput) => Effect.Effect<void>
 }
 
-const execute = Effect.fn("ApplyPatchToolTest.execute")(function* (params: { patchText: string }, ctx: ToolCtx) {
+const execute = Effect.fn("ApplyPatchToolTest.execute")(function* (
+  params: { patchText: string; summary?: string },
+  ctx: ToolCtx,
+) {
   const info = yield* ApplyPatchTool
   const tool = yield* info.init()
   return yield* tool.execute(params, ctx)
@@ -524,6 +528,29 @@ EOF`
       yield* execute({ patchText }, ctx)
       // Result has ASCII quotes because that's what the patch specifies
       expect(yield* readText(target)).toBe(`He said "hi"\nsome${emDash}dash\nend\n`)
+    }),
+  )
+})
+
+describe("tool.apply_patch approval summary", () => {
+  it.instance("passes the model's summary to the permission request for a multi-file patch", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const { ctx, calls } = makeCtx()
+      yield* writeText(path.join(test.directory, "a.txt"), "one\n")
+
+      yield* execute(
+        {
+          patchText:
+            "*** Begin Patch\n*** Add File: b.txt\n+two\n*** Update File: a.txt\n@@\n-one\n+uno\n*** End Patch",
+          summary: "Translate a.txt and add b.txt.",
+        },
+        ctx,
+      )
+
+      expect(calls).toHaveLength(1)
+      expect(calls[0].metadata.summary).toBe("Translate a.txt and add b.txt.")
+      expect(calls[0].metadata.files).toHaveLength(2)
     }),
   )
 })

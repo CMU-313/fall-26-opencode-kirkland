@@ -2485,7 +2485,12 @@ const startEdit = Effect.fn("test.startEdit")(function* (edit: "ask" | "allow") 
     noReply: true,
     parts: [{ type: "text", text: "make x const" }],
   })
-  yield* llm.tool("edit", { filePath: file, oldString: "let x = 1", newString: "const x = 1" })
+  yield* llm.tool("edit", {
+    filePath: file,
+    oldString: "let x = 1",
+    newString: "const x = 1",
+    summary: "Make x a constant since it never changes.",
+  })
   return { file, llm, session }
 })
 
@@ -2502,6 +2507,7 @@ it.instance(
       const request = yield* waitForEditRequest()
       expect(request.metadata.diff).toContain("+const x = 1")
       expect(request.metadata.diff).toContain("-let x = 1")
+      expect(request.metadata.summary).toBe("Make x a constant since it never changes.")
       expect(yield* readText(file)).toBe("let x = 1\n")
 
       yield* permission.reply({ requestID: request.id, reply: "once" })
