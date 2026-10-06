@@ -33,6 +33,36 @@ export function ceiling(max: number, approvals: number) {
   return max * (approvals + 1)
 }
 
+// Fraction of a limit consumed before the user is warned.
+export const WARNING_RATIO = 0.8
+
+// The limit closest to being reached, so a session with both limits set is
+// measured against whichever one will stop it first.
+export function pressure(input: { budget?: Budget; usage: Usage; approvals?: number }) {
+  const budget = input.budget
+  if (!budget) return undefined
+  const approvals = input.approvals ?? 0
+  const candidates: Exceeded[] = []
+  if (budget.cost !== undefined) {
+    candidates.push({ limit: "cost", max: ceiling(budget.cost, approvals), used: input.usage.cost })
+  }
+  if (budget.tokens !== undefined) {
+    candidates.push({ limit: "tokens", max: ceiling(budget.tokens, approvals), used: input.usage.tokens })
+  }
+  return candidates
+    .filter((candidate) => candidate.max > 0)
+    .map((candidate) => ({ ...candidate, ratio: candidate.used / candidate.max }))
+    .sort((a, b) => b.ratio - a.ratio)[0]
+}
+
+// Warn only below the limit; at or past it the session stops or asks instead.
+export function warning(input: { budget?: Budget; usage: Usage; approvals?: number }) {
+  const worst = pressure(input)
+  if (!worst) return undefined
+  if (worst.ratio < WARNING_RATIO || worst.ratio >= 1) return undefined
+  return worst
+}
+
 export function check(input: { budget?: Budget; usage: Usage; approvals?: number }): Exceeded | undefined {
   const budget = input.budget
   if (!budget) return undefined
