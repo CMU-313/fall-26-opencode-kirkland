@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { createTwoFilesPatch } from "diff"
 import type { Session } from "@opencode-ai/sdk/v2"
 import {
+  approvalBadge,
   editApprovalMode,
   editApprovalSession,
   isSimpleEdit,
   parseEditApprovalMode,
+  resolveEditApprovalMode,
 } from "../../src/util/edit-approval"
 
 function lines(count: number, prefix: string) {
@@ -62,5 +64,67 @@ describe("edit approval", () => {
 
   test("keeps existing session metadata when setting the mode", () => {
     expect(editApprovalSession("simple", { pinned: true }).metadata).toEqual({ pinned: true, edit_approval: "simple" })
+  })
+})
+
+describe("approval badge", () => {
+  test("shows approvals recorded by the server", () => {
+    expect(approvalBadge({ approval: { decision: "approved", reply: "once" } })).toEqual({
+      text: "✓ approved",
+      tone: "success",
+    })
+    expect(approvalBadge({ approval: { decision: "approved", reply: "always" } })).toEqual({
+      text: "✓ approved (always)",
+      tone: "success",
+    })
+  })
+
+  test("shows auto-approved changes", () => {
+    expect(approvalBadge({ approval: { decision: "auto" } })).toEqual({ text: "auto-approved", tone: "muted" })
+  })
+
+  test("shows rejections with the user's reason", () => {
+    expect(approvalBadge({ approval: { decision: "rejected", feedback: "keep it as let" } })).toEqual({
+      text: "✗ rejected: keep it as let",
+      tone: "error",
+    })
+    expect(approvalBadge({ approval: { decision: "rejected" } })).toEqual({ text: "✗ rejected", tone: "error" })
+    expect(approvalBadge({ approval: { decision: "rejected", feedback: "" } })).toEqual({
+      text: "✗ rejected",
+      tone: "error",
+    })
+  })
+
+  test("shows nothing when no decision was recorded or it is malformed", () => {
+    expect(approvalBadge(undefined)).toBeUndefined()
+    expect(approvalBadge({})).toBeUndefined()
+    expect(approvalBadge({ approval: "approved" })).toBeUndefined()
+    expect(approvalBadge({ approval: { decision: "maybe" } })).toBeUndefined()
+  })
+})
+
+describe("edit approval mode inheritance", () => {
+  const sessions: Record<string, Partial<Session>> = {
+    root: { id: "root", metadata: { edit_approval: "simple" } },
+    child: { id: "child", parentID: "root" },
+    grandchild: { id: "grandchild", parentID: "child" },
+    own: { id: "own", parentID: "root", metadata: { edit_approval: "always" } },
+    orphan: { id: "orphan" },
+  }
+  const get = (id: string) => sessions[id] as Session | undefined
+
+  test("uses the session's own mode first", () => {
+    expect(resolveEditApprovalMode("root", get)).toBe("simple")
+    expect(resolveEditApprovalMode("own", get)).toBe("always")
+  })
+
+  test("subagent sessions inherit the parent's mode", () => {
+    expect(resolveEditApprovalMode("child", get)).toBe("simple")
+    expect(resolveEditApprovalMode("grandchild", get)).toBe("simple")
+  })
+
+  test("returns undefined when no session in the chain has a mode", () => {
+    expect(resolveEditApprovalMode("orphan", get)).toBeUndefined()
+    expect(resolveEditApprovalMode("missing", get)).toBeUndefined()
   })
 })

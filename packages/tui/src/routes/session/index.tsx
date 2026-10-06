@@ -53,6 +53,7 @@ import { DialogConfirm } from "../../ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
+import { approvalBadge } from "../../util/edit-approval"
 import { Sidebar } from "./sidebar"
 import { SubagentFooter } from "./subagent-footer.tsx"
 import { filetype } from "../../util/filetype"
@@ -1903,6 +1904,7 @@ function InlineTool(props: {
       failure={props.failure}
       spinner={props.spinner}
       separate={props.separate}
+      badge={<ApprovalBadge part={props.part} />}
       onMouseOver={() => clickable() && setHover(true)}
       onMouseOut={() => setHover(false)}
       onMouseUp={() => {
@@ -1933,6 +1935,7 @@ export function InlineToolRow(props: {
   failure?: string
   spinner?: boolean
   separate?: boolean
+  badge?: JSX.Element
   children: JSX.Element
   onMouseOver?: () => void
   onMouseOut?: () => void
@@ -1986,6 +1989,7 @@ export function InlineToolRow(props: {
               >
                 {props.failed && !props.complete ? (props.failure ?? props.children) : props.children}
               </text>
+              {props.badge}
             </box>
           </Show>
         </Match>
@@ -1996,6 +2000,24 @@ export function InlineToolRow(props: {
         </box>
       </Show>
     </box>
+  )
+}
+
+// Shows whether the user approved or rejected a code change, from the decision the server recorded.
+function ApprovalBadge(props: { part?: ToolPart }) {
+  const { theme } = useTheme()
+  const badge = createMemo(() => approvalBadge(props.part?.metadata))
+  return (
+    <Show when={badge()}>
+      {(badge) => (
+        <text
+          flexShrink={0}
+          fg={badge().tone === "success" ? theme.success : badge().tone === "error" ? theme.error : theme.textMuted}
+        >
+          {badge().text}
+        </text>
+      )}
+    </Show>
   )
 }
 
@@ -2034,9 +2056,12 @@ function BlockTool(props: {
           <Show
             when={props.spinner}
             fallback={
-              <text paddingLeft={3} fg={theme.textMuted}>
-                {title()}
-              </text>
+              <box flexDirection="row" gap={1}>
+                <text paddingLeft={3} fg={theme.textMuted}>
+                  {title()}
+                </text>
+                <ApprovalBadge part={props.part} />
+              </box>
             }
           >
             <Spinner color={theme.textMuted}>{title().replace(/^# /, "")}</Spinner>

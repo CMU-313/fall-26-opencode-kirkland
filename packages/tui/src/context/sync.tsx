@@ -32,7 +32,7 @@ import { batch, onMount } from "solid-js"
 import path from "path"
 import { useKV } from "./kv"
 import { usePermission } from "./permission"
-import { editApprovalMode, isSimpleEdit } from "../util/edit-approval"
+import { isSimpleEdit, resolveEditApprovalMode } from "../util/edit-approval"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -196,10 +196,10 @@ export const {
 
         case "permission.asked": {
           const request = event.properties
-          const session = store.session.find((item) => item.id === request.sessionID)
           const simple =
             request.permission === "edit" &&
-            editApprovalMode(session) === "simple" &&
+            resolveEditApprovalMode(request.sessionID, (id) => store.session.find((item) => item.id === id)) ===
+              "simple" &&
             isSimpleEdit(request.metadata?.diff)
           if (permission.mode === "auto" || simple) {
             void sdk.client.permission.reply({

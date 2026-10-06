@@ -5,6 +5,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { MCP } from "@/mcp"
 import { McpCatalog } from "@/mcp/catalog"
 import { Permission } from "@/permission"
+import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Tool } from "@/tool/tool"
 import { ToolJsonSchema } from "@/tool/json-schema"
 import { ToolRegistry } from "@/tool/registry"
@@ -78,15 +79,35 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           },
         }
       }),
-    ask: (req) =>
-      permission
-        .ask({
-          ...req,
-          sessionID: input.session.id,
-          tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-          ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
-        })
-        .pipe(Effect.orDie),
+    ask: (req) => {
+      const asked = permission.ask({
+        ...req,
+        sessionID: input.session.id,
+        tool: { messageID: input.processor.message.id, callID: options.toolCallId },
+        ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
+      })
+      if (req.permission !== "edit") return asked.pipe(Effect.asVoid, Effect.orDie)
+      // Record the user's decision on the tool part's top-level metadata so it survives state transitions
+      // and the timeline can show which code changes were approved or rejected.
+      const record = (approval: Record<string, unknown>) =>
+        input.processor.updateToolCall(options.toolCallId, (part) => ({
+          ...part,
+          metadata: { ...part.metadata, approval: { ...approval, time: Date.now() } },
+        }))
+      return asked.pipe(
+        Effect.tap((outcome) => record(outcome === "auto" ? { decision: "auto" } : { decision: "approved", reply: outcome })),
+        Effect.tapError((error) => {
+          // Config deny rules are not a user decision, so they are not recorded as rejections.
+          if (error instanceof PermissionV1.DeniedError) return Effect.void
+          return record({
+            decision: "rejected",
+            feedback: error instanceof PermissionV1.CorrectedError ? error.feedback : undefined,
+          })
+        }),
+        Effect.asVoid,
+        Effect.orDie,
+      )
+    },
   })
 
   for (const item of yield* registry.tools({

@@ -567,7 +567,7 @@ it.instance(
         always: [],
         ruleset: [{ permission: "bash", pattern: "*", action: "allow" }],
       })
-      expect(result).toBeUndefined()
+      expect(result).toBe("auto")
     }),
   { git: true },
 )
@@ -718,6 +718,76 @@ it.instance(
 )
 
 it.instance(
+  "ask - returns auto when rules allow without prompting",
+  () =>
+    Effect.gen(function* () {
+      const outcome = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/a.ts"],
+        metadata: {},
+        always: [],
+        ruleset: [{ permission: "edit", pattern: "*", action: "allow" }],
+      })
+      expect(outcome).toBe("auto")
+      expect(yield* list()).toHaveLength(0)
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - returns the user's once reply",
+  () =>
+    Effect.gen(function* () {
+      const fiber = yield* ask({
+        id: PermissionV1.ID.make("per_outcome_once"),
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/a.ts"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [],
+      }).pipe(Effect.forkScoped)
+
+      yield* waitForPending(1)
+      yield* reply({ requestID: PermissionV1.ID.make("per_outcome_once"), reply: "once" })
+      expect(yield* Fiber.join(fiber)).toBe("once")
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - returns always for the replied request and for requests it auto-resolves",
+  () =>
+    Effect.gen(function* () {
+      const first = yield* ask({
+        id: PermissionV1.ID.make("per_outcome_always1"),
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/a.ts"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [],
+      }).pipe(Effect.forkScoped)
+      const second = yield* ask({
+        id: PermissionV1.ID.make("per_outcome_always2"),
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/b.ts"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [],
+      }).pipe(Effect.forkScoped)
+
+      yield* waitForPending(2)
+      yield* reply({ requestID: PermissionV1.ID.make("per_outcome_always1"), reply: "always" })
+      expect(yield* Fiber.join(first)).toBe("always")
+      expect(yield* Fiber.join(second)).toBe("always")
+    }),
+  { git: true },
+)
+
+it.instance(
   "reply - reject throws RejectedError",
   () =>
     Effect.gen(function* () {
@@ -799,7 +869,7 @@ it.instance(
         always: [],
         ruleset: [],
       })
-      expect(result).toBeUndefined()
+      expect(result).toBe("auto")
     }),
   { git: true },
 )
@@ -1116,7 +1186,7 @@ it.instance(
         always: [],
         ruleset: [{ permission: "bash", pattern: "*", action: "allow" }],
       })
-      expect(result).toBeUndefined()
+      expect(result).toBe("auto")
     }),
   { git: true },
 )

@@ -9,15 +9,18 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 
 export const Event = PermissionV1.Event
 
+// How an ask was settled: "auto" when rules allowed it without prompting, otherwise the user's approval reply.
+export type Outcome = "auto" | "once" | "always"
+
 export interface Interface {
-  readonly ask: (input: PermissionV1.AskInput) => Effect.Effect<void, PermissionV1.Error>
+  readonly ask: (input: PermissionV1.AskInput) => Effect.Effect<Outcome, PermissionV1.Error>
   readonly reply: (input: PermissionV1.ReplyInput) => Effect.Effect<void, PermissionV1.NotFoundError>
   readonly list: () => Effect.Effect<ReadonlyArray<PermissionV1.Request>>
 }
 
 interface PendingEntry {
   info: PermissionV1.Request
-  deferred: Deferred.Deferred<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>
+  deferred: Deferred.Deferred<"once" | "always", PermissionV1.RejectedError | PermissionV1.CorrectedError>
 }
 
 interface State {
@@ -81,7 +84,7 @@ const layer = Layer.effect(
         needsAsk = true
       }
 
-      if (!needsAsk) return
+      if (!needsAsk) return "auto" as const
 
       const id = request.id ?? PermissionV1.ID.ascending()
       const info: PermissionV1.Request = {
@@ -95,7 +98,7 @@ const layer = Layer.effect(
       }
       yield* Effect.logInfo("asking", { id, permission: info.permission, patterns: info.patterns })
 
-      const deferred = yield* Deferred.make<void, PermissionV1.RejectedError | PermissionV1.CorrectedError>()
+      const deferred = yield* Deferred.make<"once" | "always", PermissionV1.RejectedError | PermissionV1.CorrectedError>()
       pending.set(id, { info, deferred })
       yield* events.publish(Event.Asked, info)
       return yield* Effect.ensuring(
@@ -139,7 +142,7 @@ const layer = Layer.effect(
         return
       }
 
-      yield* Deferred.succeed(existing.deferred, undefined)
+      yield* Deferred.succeed(existing.deferred, input.reply)
       if (input.reply === "once") return
 
       for (const pattern of existing.info.always) {
@@ -162,7 +165,7 @@ const layer = Layer.effect(
           requestID: item.info.id,
           reply: "always",
         })
-        yield* Deferred.succeed(item.deferred, undefined)
+        yield* Deferred.succeed(item.deferred, "always")
       }
     })
 
