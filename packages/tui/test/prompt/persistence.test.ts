@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import path from "path"
 import { mkdtemp, rm } from "fs/promises"
 import { tmpdir } from "os"
-import { appendText, readJson, readText, writeJsonAtomic, writeText } from "../../src/util/persistence"
+import { appendText, readJson, readText, writeJsonAtomic, writeText, writeTextAtomic } from "../../src/util/persistence"
 
 test("persistence creates parent directories and supports text, append, and JSON", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "opencode-tui-persistence-"))
@@ -17,6 +17,13 @@ test("persistence creates parent directories and supports text, append, and JSON
     expect(await readJson<{ value: number }>(jsonPath)).toEqual({ value: 1 })
     await writeJsonAtomic(jsonPath, { value: 2 })
     expect(await readJson<{ value: number }>(jsonPath)).toEqual({ value: 2 })
+
+    const atomicPath = path.join(root, "atomic", "note.txt")
+    await writeTextAtomic(atomicPath, "hello")
+    expect(await Bun.file(atomicPath).text()).toBe("hello")
+    const leftovers: string[] = []
+    for await (const file of new Bun.Glob("*.tmp").scan(path.dirname(atomicPath))) leftovers.push(file)
+    expect(leftovers).toEqual([])
   } finally {
     await rm(root, { recursive: true, force: true })
   }

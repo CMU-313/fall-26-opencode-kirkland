@@ -114,6 +114,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 
   let input: InputRenderable
+  let seedingFilter = false
 
   const actions = createMemo(() => props.actions ?? [])
   const shownActions = createMemo(() => actions().filter((item) => !item.hidden))
@@ -272,12 +273,15 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   })
 
   createEffect(
-    on([() => store.filter, () => props.current], ([filter, current]) => {
+    on([() => store.filter, () => props.current], ([filter, current], prev) => {
+      const filterChanged = !prev || prev[0] !== filter
       if (filter.length > 0) resetSelection = true
       setTimeout(() => {
         if (filter.length > 0) {
-          moveTo(0, true, false)
-        } else if (current) {
+          if (filterChanged) moveTo(0, true, false)
+          return
+        }
+        if (current) {
           const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
           if (currentIndex >= 0) {
             moveTo(currentIndex, true)
@@ -570,8 +574,10 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
         <Show when={props.renderFilter !== false}>
           <box paddingTop={1}>
             <input
+              value={store.filter}
               onInput={(e) => {
                 if (props.locked) return
+                if (seedingFilter && e === "" && store.filter) return
                 batch(() => {
                   setStore("filter", e)
                   props.onFilter?.(e)
@@ -584,9 +590,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               ref={(r) => {
                 input = r
                 input.traits = { status: "FILTER" }
+                seedingFilter = true
+                input.value = store.filter
                 setTimeout(() => {
+                  seedingFilter = false
                   if (!input) return
                   if (input.isDestroyed) return
+                  if (store.filter && input.value !== store.filter) input.value = store.filter
                   input.focus()
                 }, 1)
               }}
