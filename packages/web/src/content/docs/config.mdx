@@ -762,6 +762,33 @@ You can control context compaction behavior through the `compaction` option.
 
 ---
 
+### Budget
+
+You can cap how much a single session is allowed to spend through the `budget` option.
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "budget": {
+    "cost": 5.00,
+    "tokens": 1000000,
+    "action": "ask"
+  }
+}
+```
+
+- `cost` - Maximum cost in USD a session may accumulate.
+- `tokens` - Maximum total tokens a session may accumulate, counting input, output, reasoning and cache.
+- `action` - What happens when a limit is reached. `stop` ends the turn (default), `ask` prompts for approval to continue.
+
+Limits are checked before each model request, so the session stops before the request that would go over. Approving an `ask` prompt raises the limit by one more budget, so a `cost` of `5.00` prompts again at `10.00`.
+
+:::note
+Models priced at zero, such as OpenRouter's free tier, always report a cost of `$0.00`. Use `tokens` rather than `cost` to cap usage on those models.
+:::
+
+---
+
 ### Watcher
 
 You can configure file watcher ignore patterns through the `watcher` option.

@@ -53,6 +53,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { eq } from "drizzle-orm"
 import { SessionTable } from "@opencode-ai/core/session/sql"
+import { SessionBudget } from "./budget"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
@@ -141,6 +142,48 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const { db } = database
+    const budgetApprovals = new Map<SessionID, number>()
+
+    // Stops the turn when the session has spent its configured budget. Returns
+    // true when the caller should break out of the loop.
+    const enforceBudget = Effect.fn("SessionPrompt.budget")(function* (sessionID: SessionID) {
+      const budget = (yield* config.get()).budget
+      if (!budget) return false
+
+      const current = yield* sessions.get(sessionID).pipe(Effect.orDie)
+      const hit = SessionBudget.check({
+        budget,
+        usage: { cost: current.cost ?? 0, tokens: SessionBudget.total(current.tokens) },
+        approvals: budgetApprovals.get(sessionID) ?? 0,
+      })
+      if (!hit) return false
+
+      if (budget.action === "ask") {
+        const approved = yield* permission
+          .ask({
+            sessionID,
+            permission: "budget",
+            patterns: [hit.limit],
+            always: [],
+            metadata: { limit: hit.limit, max: hit.max, used: hit.used },
+            ruleset: [],
+          })
+          .pipe(
+            Effect.as(true),
+            Effect.catch(() => Effect.succeed(false)),
+          )
+        if (approved) {
+          budgetApprovals.set(sessionID, (budgetApprovals.get(sessionID) ?? 0) + 1)
+          return false
+        }
+      }
+
+      const error = new SessionV1.BudgetExceededError({ message: SessionBudget.describe(hit), ...hit }).toObject()
+      yield* Effect.logInfo("budget exceeded", { "session.id": sessionID, limit: hit.limit, used: hit.used })
+      yield* events.publish(Session.Event.Error, { sessionID, error })
+      return true
+    })
+
     const ops = Effect.fn("SessionPrompt.ops")(function* () {
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
@@ -1128,6 +1171,8 @@ const layer = Layer.effect(
             yield* Effect.logInfo("exiting loop", { "session.id": sessionID })
             break
           }
+
+          if (yield* enforceBudget(sessionID)) break
 
           step++
           if (step === 1)

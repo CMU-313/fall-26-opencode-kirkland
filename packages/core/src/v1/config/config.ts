@@ -166,6 +166,22 @@ export const Info = Schema.Struct({
       }),
     }),
   ),
+  budget: Schema.optional(
+    Schema.Struct({
+      cost: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
+        description: "Maximum cost in USD a single session may accumulate",
+      }),
+      tokens: Schema.optional(NonNegativeInt).annotate({
+        description: "Maximum total tokens a single session may accumulate",
+      }),
+      action: Schema.optional(Schema.Literals(["stop", "ask"])).annotate({
+        description:
+          "What to do when a limit is reached: 'stop' ends the session turn, 'ask' requests approval to continue (default: stop)",
+      }),
+    }),
+  ).annotate({
+    description: "Session spending limits, checked before each model request",
+  }),
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),
