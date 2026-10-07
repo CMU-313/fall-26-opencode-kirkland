@@ -35,6 +35,11 @@ function EditBody(props: { request: PermissionRequest }) {
     const value = props.request.metadata?.diff
     return typeof value === "string" ? value : ""
   })
+  // One-sentence explanation the model gives with the edit, when it provides one.
+  const summary = createMemo(() => {
+    const value = props.request.metadata?.summary
+    return typeof value === "string" ? value.trim() : ""
+  })
   const stats = createMemo(() => {
     const files = getRevertDiffFiles(diff())
     return {
@@ -55,6 +60,11 @@ function EditBody(props: { request: PermissionRequest }) {
 
   return (
     <box flexDirection="column" gap={1}>
+      <Show when={summary()}>
+        <box paddingLeft={1} flexShrink={0}>
+          <text fg={theme.text}>{summary()}</text>
+        </box>
+      </Show>
       <Show when={stats().files > 0}>
         <box flexDirection="row" gap={1} paddingLeft={1} flexShrink={0}>
           <text fg={theme.textMuted}>

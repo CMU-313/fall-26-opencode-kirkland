@@ -277,3 +277,46 @@ describe("tool.write", () => {
     )
   })
 })
+
+describe("tool.write approval summary", () => {
+  const capture = () => {
+    const asks: Parameters<Tool.Context["ask"]>[0][] = []
+    const next: Tool.Context = {
+      ...ctx,
+      ask: (input) =>
+        Effect.sync(() => {
+          asks.push(input)
+        }),
+    }
+    return { asks, next }
+  }
+
+  it.instance("passes the model's summary to the edit permission request", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const { asks, next } = capture()
+
+      yield* run(
+        { filePath: path.join(test.directory, "hello.ts"), content: 'console.log("hello")\n', summary: "Add a hello script." },
+        next,
+      )
+
+      const edit = asks.filter((ask) => ask.permission === "edit")
+      expect(edit).toHaveLength(1)
+      expect(edit[0].metadata.summary).toBe("Add a hello script.")
+    }),
+  )
+
+  it.instance("leaves the summary out when the model does not provide one", () =>
+    Effect.gen(function* () {
+      const test = yield* TestInstance
+      const { asks, next } = capture()
+
+      yield* run({ filePath: path.join(test.directory, "plain.txt"), content: "plain\n" }, next)
+
+      const edit = asks.filter((ask) => ask.permission === "edit")
+      expect(edit).toHaveLength(1)
+      expect(edit[0].metadata.summary).toBeUndefined()
+    }),
+  )
+})

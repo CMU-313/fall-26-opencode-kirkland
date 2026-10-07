@@ -8,6 +8,10 @@ exports[`tool parameters JSON Schema (wire shape) apply_patch 1`] = `
       "description": "The full patch text that describes all changes to be made",
       "type": "string",
     },
+    "summary": {
+      "description": "One sentence explaining what this change does and why. Shown to the user when they are asked to approve the change.",
+      "type": "string",
+    },
   },
   "required": [
     "patchText",
@@ -62,6 +66,10 @@ exports[`tool parameters JSON Schema (wire shape) edit 1`] = `
     "replaceAll": {
       "description": "Replace all occurrences of oldString (default false)",
       "type": "boolean",
+    },
+    "summary": {
+      "description": "One sentence explaining what this change does and why. Shown to the user when they are asked to approve the change.",
+      "type": "string",
     },
   },
   "required": [
@@ -454,6 +462,10 @@ exports[`tool parameters JSON Schema (wire shape) write 1`] = `
     },
     "filePath": {
       "description": "The absolute path to the file to write (must be absolute, not relative)",
+      "type": "string",
+    },
+    "summary": {
+      "description": "One sentence explaining what this change does and why. Shown to the user when they are asked to approve the change.",
       "type": "string",
     },
   },

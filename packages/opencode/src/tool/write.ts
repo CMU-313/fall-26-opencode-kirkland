@@ -22,6 +22,10 @@ export const Parameters = Schema.Struct({
   filePath: Schema.String.annotate({
     description: "The absolute path to the file to write (must be absolute, not relative)",
   }),
+  summary: Schema.optional(Schema.String).annotate({
+    description:
+      "One sentence explaining what this change does and why. Shown to the user when they are asked to approve the change.",
+  }),
 })
 
 export const WriteTool = Tool.define(
@@ -35,7 +39,7 @@ export const WriteTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters: Parameters,
-      execute: (params: { content: string; filePath: string }, ctx: Tool.Context) =>
+      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           const instance = yield* InstanceState.context
           const filepath = path.isAbsolute(params.filePath)
@@ -58,6 +62,7 @@ export const WriteTool = Tool.define(
             metadata: {
               filepath,
               diff,
+              summary: params.summary,
             },
           })
 
