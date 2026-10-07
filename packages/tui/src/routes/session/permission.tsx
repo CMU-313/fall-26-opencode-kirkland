@@ -357,6 +357,26 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               }
             }
 
+            if (permission === "budget") {
+              const meta = props.request.metadata ?? {}
+              const limit = meta["limit"] === "tokens" ? "tokens" : "cost"
+              const max = typeof meta["max"] === "number" ? meta["max"] : 0
+              const used = typeof meta["used"] === "number" ? meta["used"] : 0
+              return {
+                icon: "$",
+                title: "Session budget reached",
+                body: (
+                  <box paddingLeft={1}>
+                    <text fg={theme.textMuted}>
+                      {limit === "cost"
+                        ? `Spent $${used.toFixed(4)} of the $${max.toFixed(2)} budget. Continue?`
+                        : `Used ${used.toLocaleString()} of ${max.toLocaleString()} tokens. Continue?`}
+                    </text>
+                  </box>
+                ),
+              }
+            }
+
             if (permission === "doom_loop") {
               return {
                 icon: "⟳",

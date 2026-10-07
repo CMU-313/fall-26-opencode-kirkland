@@ -39,6 +39,7 @@ import { DataProvider } from "./context/data"
 import { LocationProvider } from "./context/location"
 import { LocalProvider, useLocal } from "./context/local"
 import { PermissionProvider } from "./context/permission"
+import { DialogBudget } from "./component/dialog-budget"
 import { DialogModel } from "./component/dialog-model"
 import { useConnected } from "./component/use-connected"
 import { DialogMcp } from "./component/dialog-mcp"
@@ -46,6 +47,7 @@ import { DialogStatus } from "./component/dialog-status"
 import { DialogDebug } from "./component/dialog-debug"
 import { DialogThemeList } from "./component/dialog-theme-list"
 import { DialogHelp } from "./ui/dialog-help"
+import { DialogKeybinds } from "./component/dialog-keybinds"
 import { DialogAgent } from "./component/dialog-agent"
 import { DialogSessionList } from "./component/dialog-session-list"
 import { DialogWorkspaceList } from "./component/dialog-workspace-list"
@@ -108,6 +110,7 @@ const appBindingCommands = [
   "command.palette.show",
   "model.list",
   "model.auto.toggle",
+  "budget.set",
   "model.cycle_recent",
   "model.cycle_recent_reverse",
   "model.cycle_favorite",
@@ -126,6 +129,7 @@ const appBindingCommands = [
   "theme.switch_mode",
   "theme.mode.lock",
   "help.show",
+  "keybinds.edit",
   "docs.open",
   "diff.open",
   "workspace.list",
@@ -707,6 +711,15 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         },
       },
       {
+        name: "budget.set",
+        title: "Set token budget",
+        category: "Agent",
+        slashName: "budget",
+        run: () => {
+          dialog.replace(() => <DialogBudget />)
+        },
+      },
+      {
         name: "model.cycle_recent",
         title: "Model cycle",
         category: "Agent",
@@ -876,6 +889,15 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         category: "System",
       },
       {
+        name: "keybinds.edit",
+        title: "Edit keybinds",
+        slashName: "keybinds",
+        run: () => {
+          dialog.replace(() => <DialogKeybinds />)
+        },
+        category: "System",
+      },
+      {
         name: "docs.open",
         title: "Open docs",
         run: () => {
@@ -1025,10 +1047,12 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
 
   useBindings(() => ({
     mode: OPENCODE_BASE_MODE,
+    enabled: () => renderer.currentFocusedEditor?.traits?.status !== "FILTER",
     bindings: tuiConfig.keybinds.gather("app", appBindingCommands),
   }))
 
   useBindings(() => ({
+    enabled: () => renderer.currentFocusedEditor?.traits?.status !== "FILTER",
     bindings: tuiConfig.keybinds.gather("app.global", appGlobalBindingCommands),
   }))
 

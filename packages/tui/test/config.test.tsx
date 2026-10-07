@@ -5,11 +5,13 @@ import { Schema } from "effect"
 import {
   AttentionSoundName,
   Info,
+  keybindLookup,
   LeaderTimeoutDefault,
   PluginSpec,
   resolve,
   TuiConfigProvider,
   type Info as TuiConfigInfo,
+  useApplyKeybinds,
   useTuiConfig,
 } from "../src/config"
 
@@ -139,4 +141,38 @@ test("provides resolved config through Solid context", async () => {
 
 test("requires the config provider", () => {
   expect(() => useTuiConfig()).toThrow("TuiConfigProvider is missing")
+  expect(() => useApplyKeybinds()).toThrow("TuiConfigProvider is missing")
+})
+
+test("keybindLookup applies overrides and the suspend fallback", () => {
+  expect(keybindLookup({ session_list: "ctrl+l" }, true).get("session.list")).toMatchObject([{ key: "ctrl+l" }])
+  const unsupported = keybindLookup({}, false)
+  expect(unsupported.has("terminal.suspend")).toBe(false)
+  expect(unsupported.get("input.undo")).toMatchObject([{ key: "ctrl+z,ctrl+-,super+z" }])
+})
+
+test("useApplyKeybinds updates keybinds through context", async () => {
+  const config = resolve({}, { terminalSuspend: true })
+  let apply: ReturnType<typeof useApplyKeybinds> | undefined
+
+  function Consumer() {
+    apply = useApplyKeybinds()
+    const value = useTuiConfig()
+    return <text>{String(value.keybinds.get("session.list")?.[0]?.key)}</text>
+  }
+
+  const app = await testRender(() => (
+    <TuiConfigProvider config={config}>
+      <Consumer />
+    </TuiConfigProvider>
+  ))
+  try {
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("<leader>l")
+    apply?.({ session_list: "ctrl+t" })
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("ctrl+t")
+  } finally {
+    app.renderer.destroy()
+  }
 })
