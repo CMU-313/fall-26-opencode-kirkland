@@ -8,11 +8,20 @@ import { DialogVariant } from "./dialog-variant"
 import * as fuzzysort from "fuzzysort"
 import { useConnected } from "./use-connected"
 import { useSync } from "../context/sync"
+import { useSDK } from "../context/sdk"
+import { useRoute } from "../context/route"
+import { useKV } from "../context/kv"
+import { useToast } from "../ui/toast"
+import { effectiveAutoEnabled, writeAutoModelToSession, AUTO_MODEL_KV_KEY } from "../util/auto-model"
 
 export function DialogModel(props: { providerID?: string }) {
   const local = useLocal()
   const sync = useSync()
   const dialog = useDialog()
+  const sdk = useSDK()
+  const route = useRoute()
+  const kv = useKV()
+  const toast = useToast()
   const [query, setQuery] = createSignal("")
 
   const connected = useConnected()
@@ -140,6 +149,25 @@ export function DialogModel(props: { providerID?: string }) {
   })
 
   function onSelect(providerID: string, modelID: string) {
+    // If auto-model is on, turn it off — §3: a manual pick always disables auto.
+    const sessionID = route.data.type === "session" ? route.data.sessionID : undefined
+    const session = sessionID ? sync.session.get(sessionID) : undefined
+    const kvPending = kv.get(AUTO_MODEL_KV_KEY, undefined) as boolean | undefined
+    if (effectiveAutoEnabled(sessionID, session, sync.data.config, kvPending)) {
+      const modelName = sync.data.provider.find((p) => p.id === providerID)?.models[modelID]?.name ?? modelID
+      if (sessionID && session) {
+        void writeAutoModelToSession(
+          (p) => sdk.client.session.update(p),
+          sessionID,
+          session.metadata as Record<string, unknown> | undefined,
+          { enabled: false },
+        )
+      } else {
+        kv.set(AUTO_MODEL_KV_KEY, undefined)
+      }
+      toast.show({ message: `Auto model off · you picked ${modelName}`, variant: "info" })
+    }
+
     local.model.set({ providerID, modelID }, { recent: true })
     const list = local.model.variant.list()
     const cur = local.model.variant.selected()

@@ -314,6 +314,16 @@ export type ContentFilterError = {
   }
 }
 
+export type BudgetExceededError = {
+  name: "BudgetExceededError"
+  data: {
+    message: string
+    limit: "cost" | "tokens"
+    max: number
+    used: number
+  }
+}
+
 export type ApiError = {
   name: "APIError"
   data: {
@@ -346,6 +356,7 @@ export type AssistantMessage = {
     | StructuredOutputError
     | ContextOverflowError
     | ContentFilterError
+    | BudgetExceededError
     | ApiError
   parentID: string
   modelID: string
@@ -1222,6 +1233,7 @@ export type GlobalEvent = {
             | StructuredOutputError
             | ContextOverflowError
             | ContentFilterError
+            | BudgetExceededError
             | ApiError
         }
       }
@@ -2017,6 +2029,11 @@ export type Config = {
     tail_turns?: number
     preserve_recent_tokens?: number
     reserved?: number
+  }
+  budget?: {
+    cost?: number
+    tokens?: number
+    action?: "stop" | "ask"
   }
   experimental?: {
     disable_paste_summary?: boolean
@@ -5361,6 +5378,7 @@ export type SessionError = {
       | StructuredOutputError
       | ContextOverflowError
       | ContentFilterError
+      | BudgetExceededError
       | ApiError
   }
 }
@@ -6686,6 +6704,7 @@ export type EventSessionError = {
       | StructuredOutputError
       | ContextOverflowError
       | ContentFilterError
+      | BudgetExceededError
       | ApiError
   }
 }
