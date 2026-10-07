@@ -680,6 +680,10 @@ const layer = Layer.effect(
       return yield* provider.defaultModel().pipe(Effect.orDie)
     })
 
+    // Process-wide so a new Session doesn't re-hit a provider that just failed for lack of funds. Maps provider ID
+    // to when the failure was seen.
+    const outOfFunds = new Map<string, number>()
+
     // Same measure as the overflow check in runLoop: the newest finished assistant turn, read without hydrating parts.
     const lastContextTokens = Effect.fnUntraced(function* (sessionID: SessionID) {
       const row = yield* db
@@ -740,6 +744,11 @@ const layer = Layer.effect(
           providers: yield* provider.list(),
           config: cfg.autoModel,
           lastContextTokens: yield* lastContextTokens(input.sessionID),
+          outOfFunds: [...outOfFunds].flatMap(([id, time]) => {
+            if (Date.now() - time < AutoModel.OUT_OF_FUNDS_TTL) return [id]
+            outOfFunds.delete(id)
+            return []
+          }),
         })
         if (decision.metadata) yield* sessions.setMetadata({ sessionID: input.sessionID, metadata: decision.metadata })
         return decision
@@ -1401,6 +1410,9 @@ const layer = Layer.effect(
               model,
               toolChoice: format.type === "json_schema" ? "required" : undefined,
             })
+
+            if (AutoModel.isOutOfFunds(handle.message.error))
+              outOfFunds.set(lastUser.model.providerID, Date.now())
 
             if (structured !== undefined) {
               handle.message.structured = structured
