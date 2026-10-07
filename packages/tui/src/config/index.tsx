@@ -1,4 +1,5 @@
 export * as TuiConfig from "."
+export * as KeybindEdit from "./keybind-edit"
 
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { Schema } from "effect"
