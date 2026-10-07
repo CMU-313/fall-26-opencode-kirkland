@@ -148,6 +148,8 @@ const layer = Layer.effect(
     const database = yield* Database.Service
     const { db } = database
     const budgetApprovals = new Map<SessionID, number>()
+    // Ceiling a session was last warned about, so raising it warns again.
+    const budgetWarned = new Map<SessionID, number>()
 
     // Stops the turn when the session has spent its configured budget. Returns
     // true when the caller should break out of the loop.
@@ -159,12 +161,23 @@ const layer = Layer.effect(
       if (!budget) return false
 
       const current = yield* sessions.get(sessionID).pipe(Effect.orDie)
-      const hit = SessionBudget.check({
-        budget,
-        usage: { cost: current.cost ?? 0, tokens: SessionBudget.total(current.tokens) },
-        approvals: budgetApprovals.get(sessionID) ?? 0,
-      })
-      if (!hit) return false
+      const usage = { cost: current.cost ?? 0, tokens: SessionBudget.total(current.tokens) }
+      const approvals = budgetApprovals.get(sessionID) ?? 0
+      const hit = SessionBudget.check({ budget, usage, approvals })
+
+      if (!hit) {
+        const warn = SessionBudget.warning({ budget, usage, approvals })
+        if (warn && budgetWarned.get(sessionID) !== warn.max) {
+          budgetWarned.set(sessionID, warn.max)
+          yield* events.publish(Session.Event.BudgetWarning, {
+            sessionID,
+            limit: warn.limit,
+            max: warn.max,
+            used: warn.used,
+          })
+        }
+        return false
+      }
 
       if (budget.action === "ask") {
         const approved = yield* permission

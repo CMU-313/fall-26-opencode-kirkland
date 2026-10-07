@@ -63,3 +63,42 @@ describe("check", () => {
     expect(SessionBudget.check({ budget: { cost: 0 }, usage: { cost: 0, tokens: 0 } })?.limit).toBe("cost")
   })
 })
+
+describe("warning", () => {
+  const usage = (tokens: number) => ({ cost: 0, tokens })
+
+  test("stays quiet below the threshold", () => {
+    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(799) })).toBeUndefined()
+  })
+
+  test("fires once the threshold is reached", () => {
+    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(800) })).toMatchObject({
+      limit: "tokens",
+      max: 1000,
+      used: 800,
+    })
+  })
+
+  test("stays quiet at or past the limit, where the stop takes over", () => {
+    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(1000) })).toBeUndefined()
+    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(1200) })).toBeUndefined()
+  })
+
+  test("reports whichever limit is closest to being reached", () => {
+    const hit = SessionBudget.warning({
+      budget: { cost: 10, tokens: 1000 },
+      usage: { cost: 1, tokens: 850 },
+    })
+    expect(hit?.limit).toBe("tokens")
+  })
+
+  test("follows the ceiling raised by an approval", () => {
+    const budget = { tokens: 1000 }
+    expect(SessionBudget.warning({ budget, usage: usage(1600), approvals: 1 })).toMatchObject({ max: 2000 })
+    expect(SessionBudget.warning({ budget, usage: usage(1000), approvals: 1 })).toBeUndefined()
+  })
+
+  test("returns nothing when no budget is configured", () => {
+    expect(SessionBudget.warning({ usage: usage(999999) })).toBeUndefined()
+  })
+})
