@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { createTwoFilesPatch } from "diff"
 import { getRevertDiffFiles } from "../../src/util/revert-diff"
 
 describe("revert diff", () => {
@@ -31,5 +32,31 @@ index 3b18e51..0000000
         deletions: 1,
       },
     ])
+  })
+
+  test("counts changes in edit permission diffs", () => {
+    const files = getRevertDiffFiles(
+      createTwoFilesPatch("/repo/a.ts", "/repo/a.ts", "let x = 1\nkeep\n", "const x = 1\nkeep\nextra\n"),
+    )
+
+    expect(files).toEqual([{ filename: "/repo/a.ts", additions: 2, deletions: 1 }])
+  })
+
+  test("counts each file in multi-file patch permission diffs", () => {
+    const files = getRevertDiffFiles(
+      [
+        createTwoFilesPatch("/repo/a.ts", "/repo/a.ts", "one\n", "two\n"),
+        createTwoFilesPatch("/repo/b.ts", "/repo/b.ts", "", "new\nfile\n"),
+      ].join("\n"),
+    )
+
+    expect(files).toEqual([
+      { filename: "/repo/a.ts", additions: 1, deletions: 1 },
+      { filename: "/repo/b.ts", additions: 2, deletions: 0 },
+    ])
+  })
+
+  test("returns no files for an empty diff", () => {
+    expect(getRevertDiffFiles("")).toEqual([])
   })
 })
