@@ -334,21 +334,25 @@ const layer = Layer.effect(
             }
             yield* ensureToolCall(value)
             const input = isRecord(value.input) ? value.input : { value: value.input }
-            yield* updateToolCall(value.id, (match) => ({
-              ...match,
-              tool: value.name,
-              state:
-                match.state.status === "running"
-                  ? { ...match.state, input }
-                  : {
-                      status: "running",
-                      input,
-                      time: { start: Date.now() },
-                    },
-              metadata: match.metadata?.providerExecuted
+            yield* updateToolCall(value.id, (match) => {
+              const metadata = match.metadata?.providerExecuted
                 ? { ...value.providerMetadata, providerExecuted: true }
-                : value.providerMetadata,
-            }))
+                : value.providerMetadata
+              return {
+                ...match,
+                tool: value.name,
+                state:
+                  match.state.status === "running"
+                    ? { ...match.state, input }
+                    : {
+                        status: "running",
+                        input,
+                        time: { start: Date.now() },
+                      },
+                // An auto-approved edit can record its approval before this event lands; keep it.
+                metadata: match.metadata?.approval ? { ...metadata, approval: match.metadata.approval } : metadata,
+              }
+            })
 
             const parts = yield* MessageV2.parts(ctx.assistantMessage.id).pipe(
               Effect.provideService(Database.Service, database),

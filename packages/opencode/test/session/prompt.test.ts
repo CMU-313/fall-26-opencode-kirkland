@@ -2440,3 +2440,147 @@ noLLMServer.instance(
     }),
   30_000,
 )
+
+// Code change approval: the edit tool asks before writing, and the user's decision is recorded
+// on the tool part's metadata.approval so the timeline can show it.
+
+const editSession = Effect.fn("test.editSession")(function* (edit: "ask" | "allow") {
+  const sessions = yield* Session.Service
+  return yield* sessions.create({
+    title: "Edit approval",
+    permission: [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "edit", pattern: "*", action: edit },
+    ],
+  })
+})
+
+const waitForEditRequest = () =>
+  pollWithTimeout(
+    Effect.gen(function* () {
+      const permission = yield* Permission.Service
+      return (yield* permission.list()).find((request) => request.permission === "edit")
+    }),
+    "edit permission was never requested",
+  )
+
+const readText = (file: string) => Effect.promise(() => Bun.file(file).text())
+
+const editPart = Effect.fn("test.editPart")(function* (sessionID: SessionID) {
+  const msgs = yield* MessageV2.filterCompactedEffect(sessionID)
+  return msgs
+    .flatMap((msg) => msg.parts)
+    .find((part): part is SessionV1.ToolPart => part.type === "tool" && part.tool === "edit")
+})
+
+const startEdit = Effect.fn("test.startEdit")(function* (edit: "ask" | "allow") {
+  const { dir, llm } = yield* useServerConfig(providerCfg)
+  const prompt = yield* SessionPrompt.Service
+  const file = path.join(dir, "a.ts")
+  yield* writeText(file, "let x = 1\n")
+  const session = yield* editSession(edit)
+  yield* prompt.prompt({
+    sessionID: session.id,
+    agent: "build",
+    noReply: true,
+    parts: [{ type: "text", text: "make x const" }],
+  })
+  yield* llm.tool("edit", { filePath: file, oldString: "let x = 1", newString: "const x = 1" })
+  return { file, llm, session }
+})
+
+it.instance(
+  "edit approval - approving applies the change and records the approval",
+  () =>
+    Effect.gen(function* () {
+      const { file, llm, session } = yield* startEdit("ask")
+      const prompt = yield* SessionPrompt.Service
+      const permission = yield* Permission.Service
+      yield* llm.text("done")
+
+      const fiber = yield* prompt.loop({ sessionID: session.id }).pipe(Effect.forkChild)
+      const request = yield* waitForEditRequest()
+      expect(request.metadata.diff).toContain("+const x = 1")
+      expect(request.metadata.diff).toContain("-let x = 1")
+      expect(yield* readText(file)).toBe("let x = 1\n")
+
+      yield* permission.reply({ requestID: request.id, reply: "once" })
+      yield* Fiber.join(fiber)
+
+      const part = yield* editPart(session.id)
+      expect(part?.type === "tool" && part.state.status).toBe("completed")
+      expect(part?.metadata?.approval).toMatchObject({ decision: "approved", reply: "once" })
+      expect(yield* readText(file)).toBe("const x = 1\n")
+    }),
+  { git: true },
+  30_000,
+)
+
+it.instance(
+  "edit approval - rejecting with feedback keeps the file, records the reason, and sends it to the model",
+  () =>
+    Effect.gen(function* () {
+      const { file, llm, session } = yield* startEdit("ask")
+      const prompt = yield* SessionPrompt.Service
+      const permission = yield* Permission.Service
+      yield* llm.text("ok, keeping let")
+
+      const fiber = yield* prompt.loop({ sessionID: session.id }).pipe(Effect.forkChild)
+      const request = yield* waitForEditRequest()
+      yield* permission.reply({ requestID: request.id, reply: "reject", message: "keep it as let" })
+      yield* Fiber.join(fiber)
+
+      const part = yield* editPart(session.id)
+      expect(part?.type === "tool" && part.state.status).toBe("error")
+      expect(part?.metadata?.approval).toMatchObject({ decision: "rejected", feedback: "keep it as let" })
+      expect(yield* readText(file)).toBe("let x = 1\n")
+      // The loop continues so the model can revise, and its next request carries the feedback.
+      expect(yield* llm.calls).toBe(2)
+      expect(JSON.stringify((yield* llm.inputs)[1])).toContain("keep it as let")
+    }),
+  { git: true },
+  30_000,
+)
+
+it.instance(
+  "edit approval - rejecting without a reason keeps the file and stops the loop",
+  () =>
+    Effect.gen(function* () {
+      const { file, llm, session } = yield* startEdit("ask")
+      const prompt = yield* SessionPrompt.Service
+      const permission = yield* Permission.Service
+
+      const fiber = yield* prompt.loop({ sessionID: session.id }).pipe(Effect.forkChild)
+      const request = yield* waitForEditRequest()
+      yield* permission.reply({ requestID: request.id, reply: "reject" })
+      yield* Fiber.join(fiber)
+
+      const part = yield* editPart(session.id)
+      expect(part?.metadata?.approval).toMatchObject({ decision: "rejected" })
+      expect(part?.metadata?.approval).not.toHaveProperty("feedback", expect.anything())
+      expect(yield* readText(file)).toBe("let x = 1\n")
+      expect(yield* llm.calls).toBe(1)
+    }),
+  { git: true },
+  30_000,
+)
+
+it.instance(
+  "edit approval - edits allowed by rules apply without asking and are recorded as auto",
+  () =>
+    Effect.gen(function* () {
+      const { file, llm, session } = yield* startEdit("allow")
+      const prompt = yield* SessionPrompt.Service
+      const permission = yield* Permission.Service
+      yield* llm.text("done")
+
+      yield* prompt.loop({ sessionID: session.id })
+
+      expect(yield* permission.list()).toHaveLength(0)
+      const part = yield* editPart(session.id)
+      expect(part?.metadata?.approval).toMatchObject({ decision: "auto" })
+      expect(yield* readText(file)).toBe("const x = 1\n")
+    }),
+  { git: true },
+  30_000,
+)
