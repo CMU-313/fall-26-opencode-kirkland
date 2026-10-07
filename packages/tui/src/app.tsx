@@ -39,6 +39,7 @@ import { DataProvider } from "./context/data"
 import { LocationProvider } from "./context/location"
 import { LocalProvider, useLocal } from "./context/local"
 import { PermissionProvider } from "./context/permission"
+import { DialogBudget } from "./component/dialog-budget"
 import { DialogModel } from "./component/dialog-model"
 import { useConnected } from "./component/use-connected"
 import { DialogMcp } from "./component/dialog-mcp"
@@ -46,6 +47,7 @@ import { DialogStatus } from "./component/dialog-status"
 import { DialogDebug } from "./component/dialog-debug"
 import { DialogThemeList } from "./component/dialog-theme-list"
 import { DialogHelp } from "./ui/dialog-help"
+import { DialogKeybinds } from "./component/dialog-keybinds"
 import { DialogAgent } from "./component/dialog-agent"
 import { DialogSessionList } from "./component/dialog-session-list"
 import { DialogWorkspaceList } from "./component/dialog-workspace-list"
@@ -62,6 +64,7 @@ import { ToastProvider, useToast } from "./ui/toast"
 import { isDefaultTitle } from "./util/session"
 import { KVProvider, useKV } from "./context/kv"
 import * as Model from "./util/model"
+import { effectiveAutoEnabled, writeAutoModelToSession, AUTO_MODEL_KV_KEY } from "./util/auto-model"
 import { ArgsProvider, useArgs, type Args } from "./context/args"
 import open from "open"
 import { PromptRefProvider, usePromptRef } from "./context/prompt"
@@ -107,6 +110,8 @@ const appGlobalBindingCommands = [
 const appBindingCommands = [
   "command.palette.show",
   "model.list",
+  "model.auto.toggle",
+  "budget.set",
   "model.cycle_recent",
   "model.cycle_recent_reverse",
   "model.cycle_favorite",
@@ -125,6 +130,7 @@ const appBindingCommands = [
   "theme.switch_mode",
   "theme.mode.lock",
   "help.show",
+  "keybinds.edit",
   "docs.open",
   "diff.open",
   "workspace.list",
@@ -557,6 +563,32 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     if (workspace?.type !== "worktree" || !workspace.directory) return
     return workspace
   })
+  // Shared helper: disables auto-model for the current session (or clears the
+  // pending kv value) when the user manually picks a model via cycle commands.
+  // The model name is read AFTER the caller has already applied the new model.
+  function checkAndDisableAuto(sessionID: string | undefined, modelName: string) {
+    const session = sessionID ? sync.session.get(sessionID) : undefined
+    const kvPending = kv.get(AUTO_MODEL_KV_KEY, undefined) as boolean | undefined
+    if (!effectiveAutoEnabled(sessionID, session, sync.data.config, kvPending)) return
+    if (sessionID && session) {
+      void writeAutoModelToSession(
+        (p) => sdk.client.session.update(p),
+        sessionID,
+        session.metadata as Record<string, unknown> | undefined,
+        { enabled: false },
+      )
+    } else {
+      kv.set(AUTO_MODEL_KV_KEY, undefined)
+    }
+    toast.show({ message: `Auto model off · you picked ${modelName}`, variant: "info" })
+  }
+
+  function runCycleAndDisableAuto(cycleFn: () => void) {
+    const sessionID = route.data.type === "session" ? route.data.sessionID : undefined
+    cycleFn()
+    checkAndDisableAuto(sessionID, local.model.parsed().model)
+  }
+
   const appCommands = createMemo(() =>
     [
       {
@@ -640,40 +672,81 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         },
       },
       {
+        name: "model.auto.toggle",
+        title: "Toggle auto model",
+        category: "Agent",
+        slashName: "auto-model",
+        run: async () => {
+          const sessionID = route.data.type === "session" ? route.data.sessionID : undefined
+          const session = sessionID ? sync.session.get(sessionID) : undefined
+          const kvPending = kv.get(AUTO_MODEL_KV_KEY, undefined) as boolean | undefined
+          const isOn = effectiveAutoEnabled(sessionID, session, sync.data.config, kvPending)
+          if (sessionID && session) {
+            if (!isOn) {
+              void writeAutoModelToSession(
+                (p) => sdk.client.session.update(p),
+                sessionID,
+                session.metadata as Record<string, unknown> | undefined,
+                { enabled: true, resetState: true },
+              )
+              toast.show({ message: "Auto model on", variant: "info" })
+            } else {
+              void writeAutoModelToSession(
+                (p) => sdk.client.session.update(p),
+                sessionID,
+                session.metadata as Record<string, unknown> | undefined,
+                { enabled: false },
+              )
+              toast.show({ message: `Auto model off · using ${local.model.parsed().model}`, variant: "info" })
+            }
+          } else {
+            if (!isOn) {
+              kv.set(AUTO_MODEL_KV_KEY, true)
+              toast.show({ message: "Auto model on", variant: "info" })
+            } else {
+              kv.set(AUTO_MODEL_KV_KEY, false)
+              toast.show({ message: `Auto model off · using ${local.model.parsed().model}`, variant: "info" })
+            }
+          }
+          dialog.clear()
+        },
+      },
+      {
+        name: "budget.set",
+        title: "Set token budget",
+        category: "Agent",
+        slashName: "budget",
+        run: () => {
+          dialog.replace(() => <DialogBudget />)
+        },
+      },
+      {
         name: "model.cycle_recent",
         title: "Model cycle",
         category: "Agent",
         hidden: true,
-        run: () => {
-          local.model.cycle(1)
-        },
+        run: () => runCycleAndDisableAuto(() => local.model.cycle(1)),
       },
       {
         name: "model.cycle_recent_reverse",
         title: "Model cycle reverse",
         category: "Agent",
         hidden: true,
-        run: () => {
-          local.model.cycle(-1)
-        },
+        run: () => runCycleAndDisableAuto(() => local.model.cycle(-1)),
       },
       {
         name: "model.cycle_favorite",
         title: "Favorite cycle",
         category: "Agent",
         hidden: true,
-        run: () => {
-          local.model.cycleFavorite(1)
-        },
+        run: () => runCycleAndDisableAuto(() => local.model.cycleFavorite(1)),
       },
       {
         name: "model.cycle_favorite_reverse",
         title: "Favorite cycle reverse",
         category: "Agent",
         hidden: true,
-        run: () => {
-          local.model.cycleFavorite(-1)
-        },
+        run: () => runCycleAndDisableAuto(() => local.model.cycleFavorite(-1)),
       },
       {
         name: "agent.list",
@@ -813,6 +886,15 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         slashName: "help",
         run: () => {
           dialog.replace(() => <DialogHelp />)
+        },
+        category: "System",
+      },
+      {
+        name: "keybinds.edit",
+        title: "Edit keybinds",
+        slashName: "keybinds",
+        run: () => {
+          dialog.replace(() => <DialogKeybinds />)
         },
         category: "System",
       },
@@ -977,10 +1059,12 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
 
   useBindings(() => ({
     mode: OPENCODE_BASE_MODE,
+    enabled: () => renderer.currentFocusedEditor?.traits?.status !== "FILTER",
     bindings: tuiConfig.keybinds.gather("app", appBindingCommands),
   }))
 
   useBindings(() => ({
+    enabled: () => renderer.currentFocusedEditor?.traits?.status !== "FILTER",
     bindings: tuiConfig.keybinds.gather("app.global", appGlobalBindingCommands),
   }))
 

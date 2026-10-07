@@ -166,6 +166,35 @@ export const Info = Schema.Struct({
       }),
     }),
   ),
+  autoModel: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.optional(Schema.Boolean).annotate({
+        description: "Route primary-agent prompts to a model tier by prompt complexity (default: false)",
+      }),
+      freeOnly: Schema.optional(Schema.Boolean).annotate({
+        description: "Only route to free models (e.g. OpenRouter ':free' models)",
+      }),
+      exclude: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+        description: "provider/model IDs to never route to; simple * globs allowed",
+      }),
+    }),
+  ).annotate({ description: "Automatic model routing by prompt complexity" }),
+  budget: Schema.optional(
+    Schema.Struct({
+      cost: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
+        description: "Maximum cost in USD a single session may accumulate",
+      }),
+      tokens: Schema.optional(NonNegativeInt).annotate({
+        description: "Maximum total tokens a single session may accumulate",
+      }),
+      action: Schema.optional(Schema.Literals(["stop", "ask"])).annotate({
+        description:
+          "What to do when a limit is reached: 'stop' ends the session turn, 'ask' requests approval to continue (default: stop)",
+      }),
+    }),
+  ).annotate({
+    description: "Session spending limits, checked before each model request",
+  }),
   experimental: Schema.optional(
     Schema.Struct({
       disable_paste_summary: Schema.optional(Schema.Boolean),
