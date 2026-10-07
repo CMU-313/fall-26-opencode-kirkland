@@ -5,6 +5,10 @@ description: Customize your keybinds.
 
 OpenCode has a list of keybinds that you can customize through `tui.json`.
 
+## Edit in the TUI
+
+Open the command palette and choose **Edit keybinds**, or run `/keybinds`. The list is the same commands as `ctrl+p`. Select a command, press a new chord, and save. Conflicts are blocked. Use `ctrl+r` to reset the selected shortcut or `ctrl+shift+r` to restore those defaults. Changes apply immediately and are written to `tui.json` (or `tui.jsonc` if that file already exists).
+
 ```json title="tui.json"
 {
   "$schema": "https://opencode.ai/tui.json",
