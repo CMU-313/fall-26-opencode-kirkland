@@ -55,8 +55,6 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { and, desc, eq, sql } from "drizzle-orm"
 import { MessageTable, SessionTable } from "@opencode-ai/core/session/sql"
 
-import { eq } from "drizzle-orm"
-import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionBudget } from "./budget"
 
 import { SessionReminders } from "./reminders"
