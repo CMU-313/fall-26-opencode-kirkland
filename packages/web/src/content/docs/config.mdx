@@ -783,6 +783,8 @@ You can cap how much a single session is allowed to spend through the `budget` o
 
 Limits are checked before each model request, so the session stops before the request that would go over. Approving an `ask` prompt raises the limit by one more budget, so a `cost` of `5.00` prompts again at `10.00`.
 
+You can also set a token budget from inside the TUI with the `/budget` command, and the sidebar shows how much of the budget the current session has used.
+
 :::note
 Models priced at zero, such as OpenRouter's free tier, always report a cost of `$0.00`. Use `tokens` rather than `cost` to cap usage on those models.
 :::
