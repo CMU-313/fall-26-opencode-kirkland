@@ -1,9 +1,11 @@
+import { TextAttributes } from "@opentui/core"
 import { stringifyKeyStroke } from "@opentui/keymap"
 import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TuiKeybind } from "../config/keybind"
 import { clearKeybind, loadKeybinds, setKeybind } from "../config/keybind-persist"
 import { useApplyKeybinds, useTuiConfig } from "../config"
+import { useTheme } from "../context/theme"
 import {
   COMMAND_PALETTE_COMMAND,
   type OpenTuiKeymap,
@@ -23,10 +25,13 @@ export function DialogKeybinds() {
   const applyKeybinds = useApplyKeybinds()
   const keymap = useOpencodeKeymap()
   const toast = useToast()
+  const { theme } = useTheme()
   const [overlay, setOverlay] = createSignal({} as Record<string, string>)
+  const [order, setOrder] = createSignal<string[]>([])
   const [query, setQuery] = createSignal("")
   const [store, setStore] = createStore({
     capture: null as string | null,
+    captureTitle: "",
     pendingLeader: false,
     selected: "",
   })
@@ -51,7 +56,7 @@ export function DialogKeybinds() {
     }))
   })
 
-  const options = createMemo(() =>
+  const rows = createMemo(() =>
     entries().flatMap((entry) => {
       const name = definitionFor(entry.command.name)
       if (!name) return []
@@ -70,6 +75,29 @@ export function DialogKeybinds() {
     }),
   )
 
+  createEffect(() => {
+    if (order().length) return
+    const names = rows().map((item) => item.value)
+    if (names.length) setOrder(names)
+  })
+
+  const options = createMemo(() => {
+    const list = rows()
+    const frozen = order()
+    if (!frozen.length) return list
+    const byName = new Map(list.map((item) => [item.value, item]))
+    const used = new Set<string>()
+    return [
+      ...frozen.flatMap((name) => {
+        const item = byName.get(name)
+        if (!item) return []
+        used.add(name)
+        return [item]
+      }),
+      ...list.filter((item) => !used.has(item.value)),
+    ]
+  })
+
   const listed = createMemo(() => options().filter((item) => matchesWords(query(), item.title, item.category)))
 
   createEffect(() => {
@@ -79,10 +107,23 @@ export function DialogKeybinds() {
   })
 
   const save = (name: string, value: string) => {
+    if (value !== "none" && interruptsTyping(value)) {
+      toast.show({
+        message: `Use ctrl, alt, or the leader key (${displayLeader(overlay(), config)}) so it does not fire while typing.`,
+        variant: "warning",
+      })
+      return
+    }
+    if (value === "ctrl+r" || value === "ctrl+shift+r") {
+      toast.show({
+        message: `${value} is reserved for ${value === "ctrl+r" ? "Reset" : "Reset all"}.`,
+        variant: "warning",
+      })
+      return
+    }
     const conflict = conflictFor(name, value, overlay(), options().map((item) => item.value))
     if (conflict) {
       toast.show({
-        title: "Shortcut already in use",
         message: `${value} is already assigned to ${conflict}.`,
         variant: "warning",
       })
@@ -93,8 +134,12 @@ export function DialogKeybinds() {
         const next = { ...overlay(), [name]: value }
         setOverlay(next)
         applyKeybinds(next)
-        setStore({ capture: null, pendingLeader: false })
-        toast.show({ message: "Keybind saved", variant: "success" })
+        const title = store.captureTitle || options().find((item) => item.value === name)?.title || name
+        setStore({ capture: null, captureTitle: "", pendingLeader: false, selected: name })
+        toast.show({
+          message: `${title} keybind updated to ${formatStored(value, next, config) || "none"}`,
+          variant: "success",
+        })
       })
       .catch((error) => toast.error(error))
   }
@@ -137,7 +182,7 @@ export function DialogKeybinds() {
       event.preventDefault()
       event.stopPropagation()
       if (event.name === "escape") {
-        setStore({ capture: null, pendingLeader: false })
+        setStore({ capture: null, captureTitle: "", pendingLeader: false })
         return
       }
       const clear = (event.name === "backspace" || event.name === "delete") && !event.ctrl && !event.meta && !event.shift
@@ -147,12 +192,12 @@ export function DialogKeybinds() {
       }
       const next = recordChord(event)
       if (!next) return
-      if (store.pendingLeader) {
-        save(name, `<leader>${event.name}`)
-        return
-      }
       if (next === leaderChord(overlay(), config)) {
         setStore("pendingLeader", true)
+        return
+      }
+      if (store.pendingLeader) {
+        save(name, `<leader>${event.name}`)
         return
       }
       save(name, next)
@@ -172,18 +217,41 @@ export function DialogKeybinds() {
 
   return (
     <DialogSelect
-      title={store.capture ? "Press keys" : "Keyboard shortcuts"}
-      options={listed()}
+      title={
+        store.capture
+          ? store.pendingLeader
+            ? `Press a key after ${displayLeader(overlay(), config)}`
+            : "Press a new shortcut"
+          : "Keyboard shortcuts"
+      }
+      options={store.capture ? [] : listed()}
       skipFilter
+      renderFilter={!store.capture}
       locked={!!store.capture}
+      emptyView={
+        store.capture ? (
+          <box paddingLeft={4} paddingRight={4} paddingTop={1}>
+            <text fg={theme.text} attributes={TextAttributes.BOLD}>
+              {store.captureTitle || store.capture}
+            </text>
+          </box>
+        ) : undefined
+      }
+      preserveSelection
       current={store.selected}
       onFilter={setQuery}
       onMove={(option) => setStore("selected", option.value)}
-      onSelect={(option) => setStore({ capture: option.value, pendingLeader: false })}
-      footerHints={[
-        { title: "Reset", label: "ctrl+r" },
-        { title: "Reset all", label: "ctrl+shift+r" },
-      ]}
+      onSelect={(option) =>
+        setStore({ capture: option.value, captureTitle: option.title, pendingLeader: false })
+      }
+      footerHints={
+        store.capture
+          ? []
+          : [
+              { title: "Reset", label: "ctrl+r" },
+              { title: "Reset all", label: "ctrl+shift+r" },
+            ]
+      }
     />
   )
 }
@@ -246,6 +314,15 @@ function recordChord(event: { name: string; ctrl?: boolean; shift?: boolean; met
   if (event.shift) parts.push("shift")
   parts.push(event.name)
   return parts.join("+")
+}
+
+function interruptsTyping(value: string) {
+  return signatures(value).some((chord) => {
+    if (chord.includes("<leader>")) return false
+    if (/(^|\+)(ctrl|alt|meta|super)(\+|$)/.test(chord)) return false
+    const key = chord.split("+").at(-1) ?? chord
+    return key.length === 1 || ["space", "return", "enter", "tab", "backspace"].includes(key)
+  })
 }
 
 function signatures(value: unknown): string[] {
