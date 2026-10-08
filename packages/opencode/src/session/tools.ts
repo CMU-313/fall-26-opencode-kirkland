@@ -85,6 +85,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         sessionID: input.session.id,
         tool: { messageID: input.processor.message.id, callID: options.toolCallId },
         ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
+        mode: req.permission === "edit" ? Permission.editMode(input.session.metadata) : undefined,
       })
       if (req.permission !== "edit") return asked.pipe(Effect.asVoid, Effect.orDie)
       // Record the user's decision on the tool part's top-level metadata so it survives state transitions

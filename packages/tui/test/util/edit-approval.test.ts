@@ -6,6 +6,7 @@ import {
   editApprovalMode,
   editApprovalSession,
   isSimpleEdit,
+  newSessionApproval,
   parseEditApprovalMode,
   resolveEditApprovalMode,
 } from "../../src/util/edit-approval"
@@ -56,10 +57,18 @@ describe("edit approval", () => {
     expect(parseEditApprovalMode(undefined)).toBeUndefined()
   })
 
-  test("builds an ask rule for always and simple, and an allow rule for never", () => {
-    expect(editApprovalSession("always").permission).toEqual([{ permission: "edit", pattern: "*", action: "ask" }])
-    expect(editApprovalSession("simple").permission).toEqual([{ permission: "edit", pattern: "*", action: "ask" }])
-    expect(editApprovalSession("never").permission).toEqual([{ permission: "edit", pattern: "*", action: "allow" }])
+  test("stores only the mode in metadata and adds no permission rules", () => {
+    // A session permission rule would override deny rules (plan mode, config denies), so modes must not add one.
+    expect(editApprovalSession("always")).toEqual({ metadata: { edit_approval: "always" } })
+    expect(editApprovalSession("simple")).toEqual({ metadata: { edit_approval: "simple" } })
+    expect(editApprovalSession("never")).toEqual({ metadata: { edit_approval: "never" } })
+  })
+
+  test("new sessions get the saved default mode, or nothing when no valid default is saved", () => {
+    expect(newSessionApproval("simple")).toEqual({ metadata: { edit_approval: "simple" } })
+    expect(newSessionApproval("never")).toEqual({ metadata: { edit_approval: "never" } })
+    expect(newSessionApproval(undefined)).toEqual({})
+    expect(newSessionApproval("sometimes")).toEqual({})
   })
 
   test("keeps existing session metadata when setting the mode", () => {

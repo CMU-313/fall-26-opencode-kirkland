@@ -43,7 +43,7 @@ import { errorMessage } from "../../util/error"
 import {
   EDIT_APPROVAL_DEFAULT_KEY,
   editApprovalMode,
-  editApprovalSession,
+  newSessionApproval,
   parseEditApprovalMode,
 } from "../../util/edit-approval"
 import { formatDuration } from "../../util/format"
@@ -1029,9 +1029,8 @@ export function Prompt(props: PromptProps) {
       if (move.pending() && !directory) return false
       finishMoveProgress = Boolean(move.progress())
 
-      const editDefault = parseEditApprovalMode(kv.get(EDIT_APPROVAL_DEFAULT_KEY))
+      const approval: { metadata?: Record<string, unknown> } = newSessionApproval(kv.get(EDIT_APPROVAL_DEFAULT_KEY))
       const pendingAutoModel = kv.get(AUTO_MODEL_KV_KEY, undefined) as boolean | undefined
-      const approval = editDefault ? editApprovalSession(editDefault) : undefined
       const res = await sdk.client.session.create({
         directory,
         workspace: workspaceID,
@@ -1041,13 +1040,9 @@ export function Prompt(props: PromptProps) {
           id: selectedModel.modelID,
           variant,
         },
-        permission: approval?.permission,
         metadata:
-          approval || pendingAutoModel !== undefined
-            ? {
-                ...approval?.metadata,
-                ...(pendingAutoModel !== undefined ? { autoModel: { enabled: pendingAutoModel } } : {}),
-              }
+          approval.metadata || pendingAutoModel !== undefined
+            ? { ...approval.metadata, ...(pendingAutoModel !== undefined ? { autoModel: { enabled: pendingAutoModel } } : {}) }
             : undefined,
       })
 

@@ -787,6 +787,113 @@ it.instance(
   { git: true },
 )
 
+test("editMode - maps session approval modes to ask overrides", () => {
+  expect(Permission.editMode({ edit_approval: "never" })).toBe("allow")
+  expect(Permission.editMode({ edit_approval: "always" })).toBe("ask")
+  expect(Permission.editMode({ edit_approval: "simple" })).toBe("ask")
+  expect(Permission.editMode({ edit_approval: "sometimes" })).toBeUndefined()
+  expect(Permission.editMode({})).toBeUndefined()
+  expect(Permission.editMode(undefined)).toBeUndefined()
+})
+
+it.instance(
+  "ask - mode ask forces a prompt even when rules allow",
+  () =>
+    Effect.gen(function* () {
+      const fiber = yield* ask({
+        id: PermissionV1.ID.make("per_mode_ask"),
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/a.ts"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [{ permission: "edit", pattern: "*", action: "allow" }],
+        mode: "ask",
+      }).pipe(Effect.forkScoped)
+
+      yield* waitForPending(1)
+      yield* reply({ requestID: PermissionV1.ID.make("per_mode_ask"), reply: "once" })
+      expect(yield* Fiber.join(fiber)).toBe("once")
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - mode allow skips the prompt when rules would ask",
+  () =>
+    Effect.gen(function* () {
+      const outcome = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/a.ts"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [{ permission: "edit", pattern: "*", action: "ask" }],
+        mode: "allow",
+      })
+      expect(outcome).toBe("auto")
+      expect(yield* list()).toHaveLength(0)
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - modes never override deny rules",
+  () =>
+    Effect.gen(function* () {
+      // Mirrors plan mode: edits are denied except plan files.
+      const ruleset = Permission.fromConfig({ edit: { "*": "deny", ".opencode/plans/*.md": "allow" } })
+      for (const mode of ["allow", "ask"] as const) {
+        const err = yield* fail(
+          ask({
+            sessionID: SessionID.make("session_test"),
+            permission: "edit",
+            patterns: ["src/a.ts"],
+            metadata: {},
+            always: ["*"],
+            ruleset,
+            mode,
+          }),
+        )
+        expect(err).toBeInstanceOf(PermissionV1.DeniedError)
+      }
+      expect(yield* list()).toHaveLength(0)
+    }),
+  { git: true },
+)
+
+it.instance(
+  "ask - mode ask does not re-ask after the user chose allow always",
+  () =>
+    Effect.gen(function* () {
+      const first = yield* ask({
+        id: PermissionV1.ID.make("per_mode_always"),
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/a.ts"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [],
+        mode: "ask",
+      }).pipe(Effect.forkScoped)
+      yield* waitForPending(1)
+      yield* reply({ requestID: PermissionV1.ID.make("per_mode_always"), reply: "always" })
+      yield* Fiber.join(first)
+
+      const outcome = yield* ask({
+        sessionID: SessionID.make("session_test"),
+        permission: "edit",
+        patterns: ["src/b.ts"],
+        metadata: {},
+        always: ["*"],
+        ruleset: [],
+        mode: "ask",
+      })
+      expect(outcome).toBe("auto")
+    }),
+  { git: true },
+)
+
 it.instance(
   "reply - reject throws RejectedError",
   () =>
