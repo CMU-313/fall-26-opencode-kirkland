@@ -1,3 +1,14 @@
+### 17-313 Team Kirkland (Fall 2026)
+
+This fork is for [CMU 17-313](https://cmu-313.github.io/). The details for the features we implemented and how to test them are in [UserGuide.md](./UserGuide.md).
+
+- Annie Min
+- Daniel Chen
+- Gavin Lin
+- Riya Kadakia
+
+---
+
 <p align="center">
   <a href="https://opencode.ai">
     <picture>
