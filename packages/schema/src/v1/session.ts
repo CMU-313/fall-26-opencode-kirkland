@@ -663,11 +663,22 @@ export const Error = define({
   },
 })
 
+export const BudgetWarning = define({
+  type: "session.budget.warning",
+  schema: {
+    sessionID: SessionID,
+    limit: Schema.Literals(["cost", "tokens"]),
+    max: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    used: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  },
+})
+
 export const Event = {
   ...events,
   PartDelta,
   Diff,
   Error,
+  BudgetWarning,
   Definitions: inventory(
     events.Created,
     events.Updated,
@@ -679,5 +690,6 @@ export const Event = {
     PartDelta,
     Diff,
     Error,
+    BudgetWarning,
   ),
 }

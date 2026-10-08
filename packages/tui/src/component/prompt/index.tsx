@@ -1029,6 +1029,7 @@ export function Prompt(props: PromptProps) {
       if (move.pending() && !directory) return false
       finishMoveProgress = Boolean(move.progress())
 
+      const approval: { metadata?: Record<string, unknown> } = newSessionApproval(kv.get(EDIT_APPROVAL_DEFAULT_KEY))
       const pendingAutoModel = kv.get(AUTO_MODEL_KV_KEY, undefined) as boolean | undefined
       const res = await sdk.client.session.create({
         directory,
@@ -1039,8 +1040,10 @@ export function Prompt(props: PromptProps) {
           id: selectedModel.modelID,
           variant,
         },
-        ...newSessionApproval(kv.get(EDIT_APPROVAL_DEFAULT_KEY)),
-        metadata: pendingAutoModel !== undefined ? { autoModel: { enabled: pendingAutoModel } } : undefined,
+        metadata:
+          approval.metadata || pendingAutoModel !== undefined
+            ? { ...approval.metadata, ...(pendingAutoModel !== undefined ? { autoModel: { enabled: pendingAutoModel } } : {}) }
+            : undefined,
       })
 
       if (res.error) {

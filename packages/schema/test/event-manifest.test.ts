@@ -22,6 +22,7 @@ describe("public event manifest", () => {
       SessionV1.Event.PartDelta,
       SessionV1.Event.Diff,
       SessionV1.Event.Error,
+      SessionV1.Event.BudgetWarning,
     ])
     expect(EventManifest.Latest.size).toBe(85)
     expect(EventManifest.Durable.size).toBe(32)
