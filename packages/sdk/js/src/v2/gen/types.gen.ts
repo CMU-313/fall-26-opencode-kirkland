@@ -51,6 +51,7 @@ export type Event =
   | EventMessagePartDelta
   | EventSessionDiff
   | EventSessionError
+  | EventSessionBudgetWarning
   | EventInstallationUpdated
   | EventInstallationUpdateAvailable
   | EventFileEdited
@@ -314,6 +315,16 @@ export type ContentFilterError = {
   }
 }
 
+export type BudgetExceededError = {
+  name: "BudgetExceededError"
+  data: {
+    message: string
+    limit: "cost" | "tokens"
+    max: number
+    used: number
+  }
+}
+
 export type ApiError = {
   name: "APIError"
   data: {
@@ -346,6 +357,7 @@ export type AssistantMessage = {
     | StructuredOutputError
     | ContextOverflowError
     | ContentFilterError
+    | BudgetExceededError
     | ApiError
   parentID: string
   modelID: string
@@ -1222,7 +1234,18 @@ export type GlobalEvent = {
             | StructuredOutputError
             | ContextOverflowError
             | ContentFilterError
+            | BudgetExceededError
             | ApiError
+        }
+      }
+    | {
+        id: string
+        type: "session.budget.warning"
+        properties: {
+          sessionID: string
+          limit: "cost" | "tokens"
+          max: number
+          used: number
         }
       }
     | {
@@ -2017,6 +2040,11 @@ export type Config = {
     tail_turns?: number
     preserve_recent_tokens?: number
     reserved?: number
+  }
+  budget?: {
+    cost?: number
+    tokens?: number
+    action?: "stop" | "ask"
   }
   experimental?: {
     disable_paste_summary?: boolean
@@ -2899,6 +2927,7 @@ export type V2Event =
   | MessagePartDelta
   | SessionDiff
   | SessionError
+  | SessionBudgetWarning
   | InstallationUpdated
   | InstallationUpdateAvailable
   | FileEdited
@@ -5361,7 +5390,28 @@ export type SessionError = {
       | StructuredOutputError
       | ContextOverflowError
       | ContentFilterError
+      | BudgetExceededError
       | ApiError
+  }
+}
+
+export type SessionBudgetWarning = {
+  id: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  type: "session.budget.warning"
+  durable?: {
+    aggregateID: string
+    seq: number
+    version: number
+  }
+  location?: LocationRef
+  data: {
+    sessionID: string
+    limit: "cost" | "tokens"
+    max: number
+    used: number
   }
 }
 
@@ -6686,7 +6736,19 @@ export type EventSessionError = {
       | StructuredOutputError
       | ContextOverflowError
       | ContentFilterError
+      | BudgetExceededError
       | ApiError
+  }
+}
+
+export type EventSessionBudgetWarning = {
+  id: string
+  type: "session.budget.warning"
+  properties: {
+    sessionID: string
+    limit: "cost" | "tokens"
+    max: number
+    used: number
   }
 }
 

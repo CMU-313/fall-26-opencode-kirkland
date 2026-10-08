@@ -704,6 +704,219 @@ it.instance("loop stops provider overflow instead of auto-compacting when disabl
   }),
 )
 
+// Budget semantics
+
+const budgetCfg = (budget: NonNullable<ConfigV1.Info["budget"]>) => ({ ...cfg, budget })
+
+const pendingBudget = () =>
+  Effect.gen(function* () {
+    const permission = yield* Permission.Service
+    return (yield* permission.list()).find((request) => request.permission === "budget")
+  })
+
+noLLMServer.instance(
+  "stops before any model request when the token budget is exhausted",
+  () =>
+    Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Pinned" })
+      yield* user(chat.id, "hello")
+
+      const result = yield* prompt.loop({ sessionID: chat.id })
+
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant") {
+        expect(result.info.error?.name).toBe("BudgetExceededError")
+        expect(result.info.finish).toBe("error")
+      }
+    }),
+  { config: budgetCfg({ tokens: 0, action: "stop" }) },
+)
+
+noLLMServer.instance(
+  "stops before any model request when the cost budget is exhausted",
+  () =>
+    Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Pinned" })
+      yield* user(chat.id, "hello")
+
+      const result = yield* prompt.loop({ sessionID: chat.id })
+
+      expect(result.info.role).toBe("assistant")
+      if (result.info.role === "assistant") expect(result.info.error?.name).toBe("BudgetExceededError")
+    }),
+  { config: budgetCfg({ cost: 0, action: "stop" }) },
+)
+
+noLLMServer.instance(
+  "records the budget stop as a durable assistant message",
+  () =>
+    Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const chat = yield* sessions.create({ title: "Pinned" })
+      yield* user(chat.id, "hello")
+
+      yield* prompt.loop({ sessionID: chat.id })
+      const messages = yield* sessions.messages({ sessionID: chat.id })
+      const assistant = messages.find((message) => message.info.role === "assistant")
+
+      expect(assistant).toBeDefined()
+      if (assistant?.info.role === "assistant") {
+        expect(assistant.info.error?.name).toBe("BudgetExceededError")
+        expect(assistant.info.time.completed).toBeDefined()
+      }
+    }),
+  { config: budgetCfg({ tokens: 0, action: "stop" }) },
+)
+
+it.instance("does not stop the loop when usage is under the budget", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      budget: { tokens: 1_000_000, action: "stop" },
+    }))
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.text("world")
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") expect(result.info.error).toBeUndefined()
+    expect(yield* llm.hits).toHaveLength(1)
+    expect(yield* pendingBudget()).toBeUndefined()
+  }),
+)
+
+noLLMServer.instance(
+  "rejecting the budget approval stops the loop",
+  () =>
+    Effect.gen(function* () {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const permission = yield* Permission.Service
+      const chat = yield* sessions.create({ title: "Pinned" })
+      yield* user(chat.id, "hello")
+
+      const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+      const request = yield* pollWithTimeout(pendingBudget(), "budget permission request")
+      expect(request.patterns).toEqual(["tokens"])
+      expect(request.metadata).toMatchObject({ limit: "tokens", max: 0 })
+      yield* permission.reply({ requestID: request.id, reply: "reject" })
+
+      const result = yield* Fiber.join(fiber)
+      if (result.info.role === "assistant") expect(result.info.error?.name).toBe("BudgetExceededError")
+    }),
+  { config: budgetCfg({ tokens: 0, action: "ask" }) },
+)
+
+it.instance("approving the budget lets the loop reach the model", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      budget: { tokens: 0, action: "ask" },
+    }))
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const permission = yield* Permission.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+    yield* prompt.prompt({
+      sessionID: chat.id,
+      agent: "build",
+      noReply: true,
+      parts: [{ type: "text", text: "hello" }],
+    })
+    yield* llm.text("world")
+
+    const fiber = yield* prompt.loop({ sessionID: chat.id }).pipe(Effect.forkChild)
+    const request = yield* pollWithTimeout(pendingBudget(), "budget permission request")
+    yield* permission.reply({ requestID: request.id, reply: "once" })
+
+    // A zero budget cannot be raised by an approval, so the gate asks again on
+    // the next turn. Reaching the model at all is what proves approval worked.
+    yield* pollWithTimeout(
+      Effect.map(llm.hits, (hits) => (hits.length > 0 ? hits : undefined)),
+      "model request after approval",
+    )
+    yield* prompt.cancel(chat.id)
+    yield* Fiber.await(fiber)
+  }),
+)
+
+it.instance("warns once when usage crosses 80 percent of the budget", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig((url) => ({
+      ...providerCfg(url),
+      budget: { tokens: 10_000, action: "stop" },
+    }))
+    const events = yield* EventV2Bridge.Service
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({
+      title: "Pinned",
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    })
+
+    // A step-finish part is what the projector accumulates onto the session, so
+    // writing one puts recorded usage at 80% of the cap without a real turn.
+    const seeded = yield* user(chat.id, "seed usage")
+    yield* sessions.updatePart({
+      id: PartID.ascending(),
+      messageID: seeded.id,
+      sessionID: chat.id,
+      type: "step-finish",
+      reason: "stop",
+      tokens: { input: 8_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      cost: 0,
+    })
+
+    const warnings: string[] = []
+    yield* events.listen((event) => {
+      if (event.type === "session.budget.warning") warnings.push(event.type)
+      return Effect.void
+    })
+
+    yield* llm.text("world")
+    yield* prompt.loop({ sessionID: chat.id })
+    expect(warnings).toHaveLength(1)
+
+    // A second turn at the same ceiling must not warn again.
+    yield* user(chat.id, "again")
+    yield* llm.text("world again")
+    yield* prompt.loop({ sessionID: chat.id })
+    expect(warnings).toHaveLength(1)
+  }),
+)
+
+it.instance("retains a configured budget when config is reloaded", () =>
+  Effect.gen(function* () {
+    const { directory: dir } = yield* TestInstance
+    const config = yield* Config.Service
+
+    yield* writeConfig(dir, { budget: { tokens: 123_456, action: "ask" } })
+    yield* config.invalidate()
+
+    expect((yield* config.get()).budget).toEqual({ tokens: 123_456, action: "ask" })
+  }),
+)
+
 noLLMServer.instance.skip(
   "prompt emits v2 prompted and synthetic events (v2 projector disabled)",
   () =>

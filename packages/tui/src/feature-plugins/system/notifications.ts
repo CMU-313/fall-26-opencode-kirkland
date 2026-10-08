@@ -77,6 +77,12 @@ const tui: TuiPlugin = async (api) => {
     notify(api, sessionID, "Session done", session?.parentID ? "subagent_done" : "done")
   })
 
+  api.event.on("session.budget.warning", (event) => {
+    const used = event.properties.limit === "cost" ? `$${event.properties.used.toFixed(2)}` : event.properties.used.toLocaleString()
+    const max = event.properties.limit === "cost" ? `$${event.properties.max.toFixed(2)}` : event.properties.max.toLocaleString()
+    notify(api, event.properties.sessionID, `Budget warning: ${used} of ${max} used`, "default")
+  })
+
   api.event.on("session.error", (event) => {
     const sessionID = event.properties.sessionID
     if (!sessionID) return
