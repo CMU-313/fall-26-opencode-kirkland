@@ -415,3 +415,274 @@ Writing the plan mode test is how that bug was found.
   sessions.
 - **Allow always lasts until OpenCode restarts.**
 - **Badges only appear for code changes** decided after this feature was added.
+
+---
+
+## Auto Model Selection
+
+Picks a model for each prompt based on how complex the prompt is, so quick edits and
+questions go to a cheap model and only demanding work goes to an expensive one. You stop
+paying top-tier prices for "fix this typo" without having to switch models by hand.
+
+This feature is in the terminal UI (`bun dev`). It applies to prompts you send to a primary
+agent such as **Build** or **Plan**.
+
+### Turning it on
+
+By default Auto is off and OpenCode uses the model you picked. There are two ways to turn it on.
+
+**From inside OpenCode**: type `/auto-model` in the message box, or pick **Toggle auto model**
+from the command palette. Run it again to turn Auto off. Inside a session this applies to that
+session and is saved with it. On the home screen it applies to the next session you start.
+You can also bind a key to it with the `model_auto_toggle` keybind (unbound by default).
+
+**From a config file**: add an `autoModel` block to `opencode.json` in your project root, or to
+`~/.config/opencode/opencode.json` to apply it everywhere:
+
+```json
+{
+  "autoModel": {
+    "enabled": true,
+    "freeOnly": false,
+    "exclude": ["openai/gpt-5*", "anthropic/claude-opus-*"]
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `enabled` | Turn Auto on for sessions that have not chosen otherwise (default `false`) |
+| `freeOnly` | Only route to free models, such as OpenRouter's `:free` tier |
+| `exclude` | `provider/model` IDs Auto must never pick. `*` matches any run of characters |
+
+A session's own setting from `/auto-model` always wins over the config file.
+
+### How a model is chosen
+
+Every prompt goes through three steps.
+
+**1. Classify the prompt.** The prompt is scored into one of three tiers:
+
+| Tier | Typical prompts |
+| --- | --- |
+| **simple** | Typos, renames, changing a value, adding a comment, short questions such as *"what does this do?"* |
+| **moderate** | A single feature or bug fix: adding a test, an endpoint, a flag, validation, *"X throws when Y"* |
+| **complex** | Refactors, migrations, debugging and investigating, performance and security work, multi-step requests |
+
+The score adds up signals from the prompt: keywords such as `refactor` or `investigate` (raise it)
+and `rename` or `typo` (lower it), the number of steps in a list or a *"do A, then B"* request,
+the length, pasted code or stack traces, and attached files, folders, images or `@agent` mentions.
+Pasted code and stack frames count toward length but not toward keywords, so a stack trace that
+happens to contain the word `test` does not change the tier on its own.
+
+**2. Avoid flip-flopping.** Moving **up** a tier is immediate. Moving **down** waits until three
+prompts in a row ask for a lower tier, so one quick question in the middle of a hard task stays
+on the stronger model. When it does step down, it only goes as low as the most demanding of
+those three prompts needed.
+
+**3. Pick a model from that tier.** Every model you have access to is ranked by price, using
+input tokens weighted 3:1 over output, since agent turns resend long contexts and produce
+shorter replies. The ranked list is split into thirds. **simple** uses the cheapest model,
+**moderate** the middle model of its third, and **complex** the most expensive. A free model is
+ranked at the price of its paid counterpart, so `x:free` sits where `x` would.
+
+Models are left out when they cannot do the job: no tool calling, no text output, no known
+price, aliases that route to an unknown model (such as `openrouter/auto`), or anything matching
+`exclude`. On each prompt Auto also skips models whose context window could not hold the
+conversation so far plus 20% headroom, models that cannot read images when you attached one,
+and the paid models of a provider that just reported it is out of funds (for 30 minutes, so
+topping up brings it back without a restart). If that leaves a tier empty, Auto uses the
+nearest tier above it, then below it.
+
+### What you see
+
+- The footer shows **`Auto model · <model name>`** in place of the usual model name, or just
+  **`Auto model`** before the first prompt is routed.
+- When the routed model changes, a toast shows the tier and the new model, for example
+  `Auto model: complex → claude-sonnet-4`. No toast appears when the model stays the same.
+- Picking a model yourself, with `/models` or by cycling models with **F2**, turns Auto off for
+  that session and shows `Auto model off · you picked <model>`. Your choice always wins.
+- Each decision is written to the OpenCode log (`~/.local/share/opencode/log/`) as
+  `autoModel.route`, with the score, the signals behind it, the tier before and after, the model
+  picked, and why. Skipped prompts log the reason too.
+
+### When Auto does not route
+
+Auto leaves the model alone, and you get the session's normal model, for:
+
+- subagent sessions and agents with `mode: "subagent"`, which run on the model of the turn
+  that started them, so they still follow what Auto picked for the parent
+- hidden agents, such as the ones that write session titles and summaries
+- agents whose config pins a `model`, since that choice was made on purpose
+- messages with no text of your own, such as a resumed turn or a shell command
+
+### How to user test it
+
+You need at least one provider configured. An OpenRouter key with `"freeOnly": true` lets you
+try everything without spending money. Start OpenCode from `packages/opencode` with `bun dev`.
+
+**1. Turn it on and watch it route.**
+
+Type `/auto-model`. A toast should say `Auto model on` and the footer should read `Auto model`.
+Send *"Fix the typo 'Totl' in README.md"*. A toast should show `simple → <model>`, and the footer
+should change to `Auto model · <model>`. With `/models` open, check that model is one of the
+cheapest you have.
+
+**2. Move up a tier.**
+
+In the same session, send *"Investigate why the build is slow and refactor the config loading
+so it is cached"*. A toast should show `complex → <model>`, and the footer should switch to an
+expensive model straight away.
+
+**3. Check it does not drop down too early.**
+
+Now send three simple prompts in a row, for example *"What is the value of RETRIES?"* three times.
+The first two should stay on the complex model with no toast. The third should switch down and
+show a toast.
+
+**4. Check a manual pick turns it off.**
+
+Open `/models` and pick any model. A toast should say `Auto model off · you picked <model>`, the
+footer should go back to the normal model name, and the next prompt should use the model you
+picked with no Auto toast. Run `/auto-model` to turn it back on.
+
+**5. Check it is saved.**
+
+Quit OpenCode, start it again, and reopen the session with `/sessions`. The footer should still
+show `Auto model · <model>`.
+
+**6. Check the config options.**
+
+Add `"exclude": ["*"]` to the `autoModel` block and restart. Prompts should use the session's
+normal model, and the log should show `reason: "no-candidates"`. Remove it, set `"freeOnly": true`,
+and confirm that only `:free` models are picked.
+
+**7. Read the reasoning.**
+
+Open the newest file in `~/.local/share/opencode/log/` and search for `autoModel.route`. Each
+prompt from the steps above should have an entry with its `score`, its `signals` (for example
+`keyword:typo(-1)`), `fromTier`, `toTier`, the chosen `model` and a `reason` such as `upgrade` or
+`lower-streak:2/3`.
+
+### Measured cost savings
+
+To check that Auto saves money without hurting results, the same prompt was run twice against a
+small sample project: once with Auto off, pinned to the most expensive free model
+(`openrouter/thinkingmachines/inkling:free`), and once with Auto on. Both runs used free models,
+so the recorded tokens were priced at each model's paid counterpart, the same mapping Auto uses to
+rank models. The sample project's own tests decided whether each run passed.
+
+So far one prompt has finished in both runs:
+
+| Prompt | Tier | Auto picked | Auto off | Auto on | Savings | Tokens (off → on) | Passed (off / on) |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| *"Change TIMEOUT_MS in src/config.ts from 60 to 300"* | simple | `poolside/laguna-xs-2.1:free` | $0.0159 | $0.0063 | **60.6%** | 41,378 → 127,327 | ✅ / ✅ |
+
+Auto classified the prompt as **simple**, routed it to a cheaper model, and the change still
+passed. The cheaper model used about three times as many tokens, but its lower price still made
+the run 60.6% cheaper. One prompt is not enough to say how much Auto saves on average. It does
+show the whole path working end to end: the prompt is classified, a cheaper model is picked, and
+the result is still correct.
+
+### Automated tests
+
+All of the tests below run without contacting a model or a provider.
+
+**Prompt classifier**: [`packages/opencode/test/session/auto-model-classify.test.ts`](packages/opencode/test/session/auto-model-classify.test.ts)
+
+Thirteen tests. Typical prompts land in the right tier: typos, renames and questions are
+**simple**, adding a test or fixing a crash is **moderate**, and refactors and migrations are
+**complex**. Empty or system-only input is **simple**. The rest check the individual signals:
+keyword caps, whole-word and case-insensitive matching with plurals (`latest` is not `test`,
+`TESTS` is), length buckets, step counting for lists, *"then"* and *"A, B, and C"*, pasted code
+and stack frames not adding keywords, value swaps and quoted strings lowering the score,
+attachments and `@agent` mentions raising it, negative scores clamping to zero, and the logged
+signal weights always adding up to the score.
+
+**Downgrade delay**: [`packages/opencode/test/session/auto-model-hysteresis.test.ts`](packages/opencode/test/session/auto-model-hysteresis.test.ts)
+
+Seven tests. The first prompt takes its own tier, an upgrade is immediate, a downgrade waits for
+three lower prompts and only steps down as far as the most demanding of them needed, a same-tier
+prompt or an upgrade resets the count, and corrupted saved state starts over instead of crashing.
+
+**Model ranking**: [`packages/opencode/test/session/auto-model-tiers.test.ts`](packages/opencode/test/session/auto-model-tiers.test.ts)
+
+Twelve tests. What counts as free, the 3:1 price weighting, free models priced as their paid
+counterpart, unpriced models left out, each excluded model counted under one reason, `exclude`
+globs and `freeOnly`, splitting into thirds including uneven counts and fewer than three models,
+breaking price ties, and picking the cheapest, middle and most expensive model per tier.
+
+**The router**: [`packages/opencode/test/session/auto-model.test.ts`](packages/opencode/test/session/auto-model.test.ts)
+
+Twenty-six tests on the function that `prompt.ts` calls before every primary-agent prompt:
+
+- Auto is off by default, the config turns it on, and a session's own setting overrides the config
+- each of the six skip cases (child session, subagent, hidden agent, pinned model, no reply, no
+  user text) leaves the model and saved state alone and logs why
+- each tier routes to its model, and the downgrade delay carries over between prompts through
+  the saved session state
+- a toast only when the model changes, unrelated session data and the on/off flag are kept
+  when saving, and a model variant is only kept when the new model supports it
+- `exclude` and `freeOnly` are respected
+- the log contains the score, the signals and the reason, including why a downgrade is waiting
+  and why a prompt was skipped
+- models too small for the conversation are skipped with a fallback to a higher tier, models
+  with an unknown context size are kept, and an image attachment requires an image-capable model
+- when nothing is left to route to, the prompt still runs and the downgrade count still advances
+- out of funds: a provider's paid models are skipped, unrelated providers are not affected, and
+  billing errors are recognized both as HTTP 402 and from the error message
+
+**Terminal UI helpers**: [`packages/tui/test/util/auto-model.test.ts`](packages/tui/test/util/auto-model.test.ts)
+
+Eleven tests on what the footer and `/auto-model` rely on. Auto is off by default, the config is
+the fallback, the session setting wins once a session exists, the home-screen toggle wins before
+one does, and bad values are ignored. The footer reads the last routed model, or nothing when it
+is missing or malformed. Turning Auto off keeps the saved routing state, turning it on clears it,
+and both keep unrelated session data.
+
+### Why these tests are sufficient
+
+The feature is a pipeline of small decisions: score the prompt, decide whether to change tier,
+rank the models, filter them, pick one. Each step is pure, synchronous code with no network
+access, so each one is tested directly against its inputs and outputs rather than through a
+mock of a model. The router tests then run the whole pipeline together, with saved session state
+carried from one prompt to the next the same way `prompt.ts` does it.
+
+| Requirement | Where it is tested |
+| --- | --- |
+| Prompts are sorted into simple, moderate and complex | Classifier tests |
+| Cheap tier gets a cheap model, complex tier an expensive one | Ranking tests (`pick`), router tests (each tier routes to its model) |
+| No flip-flopping between models | Downgrade delay tests, router test across prompts |
+| Off by default, session setting beats config | Router enablement tests, TUI helper tests |
+| Never routes where it should not (subagents, pinned models) | Router skip tests, one per case |
+| Never picks a model that would fail | Router filter tests (context, image, out of funds), ranking exclusion tests |
+| A prompt is never blocked by routing | Router "nothing routable" test |
+| Decisions can be explained | Router logging tests, classifier "weights add up to the score" test |
+| Free models and `exclude` | Ranking tests, router config test |
+
+The classifier tests matter most, because hand-tuned keyword weights are easy to break when a
+new keyword is added. They pin down both typical prompts for each tier and each signal on its
+own, and the "weights add up to the score" test guards the log against drifting out of step with
+the score it explains.
+
+Edge cases a user would rarely hit by hand are covered explicitly: fewer than three models
+available, two models at the same price, corrupted session data from disk, and a provider that
+reports running out of money with a 400 and a message instead of a 402.
+
+The TUI wiring (the `/auto-model` command, the footer and the manual-pick toast) is a thin layer
+over the tested helpers and is covered by user-testing steps 1, 4 and 5.
+
+### Known limitations
+
+- **The classifier is keyword-based and tuned for English.** It does not understand the code, so
+  a short prompt for a hard change (*"make it faster"*) can be scored too low. Pick a model by
+  hand in that case.
+- **Price is used as a stand-in for capability.** The most expensive model you have is assumed to
+  be the strongest.
+- **Terminal UI only.** The web and desktop apps follow the config file but have no toggle or
+  footer label.
+- **`freeOnly` and `exclude` are config-only.** `/auto-model` only turns Auto on or off.
+- **Out-of-funds tracking is held in memory.** Restarting the server forgets it, and the prompt
+  that hit the billing error is not retried on another model.
+- **Subagents are not routed on their own.** They use whatever model the parent turn was routed
+  to, even if their task is simpler or harder than the parent's prompt.
