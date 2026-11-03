@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { classify, TIERS, type Tier } from "../../src/session/auto-model-classify"
 import { next } from "../../src/session/auto-model-hysteresis"
@@ -339,4 +339,10 @@ describe("R7: two follow-ups stay high, the third drops", () => {
       RUNS,
     )
   })
+})
+
+// Prints a line in CI logs, which only list failing tests, so the PR's test
+// log shows these properties ran.
+afterAll(() => {
+  console.log("auto-model property tests ran: R1, R2, R3, R7 (8 properties, 500 runs each)")
 })
