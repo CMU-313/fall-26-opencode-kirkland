@@ -79,9 +79,22 @@ describe("warning", () => {
     })
   })
 
-  test("stays quiet at or past the limit, where the stop takes over", () => {
-    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(1000) })).toBeUndefined()
-    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(1200) })).toBeUndefined()
+  test("still fires at or past the limit, so a stop is never silent", () => {
+    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(1000) })).toMatchObject({
+      limit: "tokens",
+      max: 1000,
+    })
+    expect(SessionBudget.warning({ budget: { tokens: 1000 }, usage: usage(1200) })).toMatchObject({
+      limit: "tokens",
+      max: 1000,
+    })
+  })
+
+  test("stays quiet once it has fired for that ceiling", () => {
+    const budget = { tokens: 1000 }
+    const warn = SessionBudget.warning({ budget, usage: usage(850) })
+    expect(warn).toBeDefined()
+    expect(SessionBudget.warning({ budget, usage: usage(900), warned: SessionBudget.key(warn!) })).toBeUndefined()
   })
 
   test("reports whichever limit is closest to being reached", () => {

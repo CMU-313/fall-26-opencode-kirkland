@@ -191,6 +191,18 @@ export const Info = Schema.Struct({
         description:
           "What to do when a limit is reached: 'stop' ends the session turn, 'ask' requests approval to continue (default: stop)",
       }),
+      grant: Schema.optional(
+        Schema.Struct({
+          cost: Schema.optional(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))).annotate({
+            description: "USD one approval adds to the cost limit (default: the limit itself)",
+          }),
+          tokens: Schema.optional(NonNegativeInt).annotate({
+            description: "Tokens one approval adds to the token limit (default: the limit itself)",
+          }),
+        }),
+      ).annotate({
+        description: "How much headroom one approval grants before approval is requested again",
+      }),
     }),
   ).annotate({
     description: "Session spending limits, checked before each model request",
