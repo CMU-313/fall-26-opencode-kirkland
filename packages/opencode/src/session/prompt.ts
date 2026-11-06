@@ -148,8 +148,10 @@ const layer = Layer.effect(
     const database = yield* Database.Service
     const { db } = database
     const budgetApprovals = new Map<SessionID, number>()
-    // Ceiling a session was last warned about, so raising it warns again.
-    const budgetWarned = new Map<SessionID, number>()
+    // Limit and ceiling a session was last warned about, so raising either warns again.
+    const budgetWarned = new Map<SessionID, string | undefined>()
+    // Budget a session was last measured against, so editing it warns again.
+    const budgetSeen = new Map<SessionID, SessionBudget.Budget>()
 
     // Stops the turn when the session has spent its configured budget. Returns
     // true when the caller should break out of the loop.
@@ -165,19 +167,22 @@ const layer = Layer.effect(
       const approvals = budgetApprovals.get(sessionID) ?? 0
       const hit = SessionBudget.check({ budget, usage, approvals })
 
-      if (!hit) {
-        const warn = SessionBudget.warning({ budget, usage, approvals })
-        if (warn && budgetWarned.get(sessionID) !== warn.max) {
-          budgetWarned.set(sessionID, warn.max)
-          yield* events.publish(Session.Event.BudgetWarning, {
-            sessionID,
-            limit: warn.limit,
-            max: warn.max,
-            used: warn.used,
-          })
-        }
-        return false
+      // Published before the stop, so a turn that overshoots in one request is
+      // still warned about the limit that stops it.
+      const warned = SessionBudget.rearm(budgetSeen.get(sessionID), budget, budgetWarned.get(sessionID))
+      budgetSeen.set(sessionID, budget)
+      const warn = SessionBudget.warning({ budget, usage, approvals, warned })
+      budgetWarned.set(sessionID, warn ? SessionBudget.key(warn) : warned)
+      if (warn) {
+        yield* events.publish(Session.Event.BudgetWarning, {
+          sessionID,
+          limit: warn.limit,
+          max: warn.max,
+          used: warn.used,
+        })
       }
+
+      if (!hit) return false
 
       if (budget.action === "ask") {
         const approved = yield* permission
@@ -203,7 +208,7 @@ const layer = Layer.effect(
       // request, so without this the transcript shows a prompt with no reply and
       // no explanation once the error event is gone.
       const ctx = yield* InstanceState.context
-      const error = new SessionV1.BudgetExceededError({ message: SessionBudget.describe(hit), ...hit }).toObject()
+      const error = new SessionV1.BudgetExceededError({ message: SessionBudget.describe(hit, budget.action), ...hit }).toObject()
       const now = Date.now()
       yield* sessions.updateMessage({
         id: MessageID.ascending(),
