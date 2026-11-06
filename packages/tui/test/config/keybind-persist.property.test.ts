@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeEach, expect, test } from "bun:test"
 import fc from "fast-check"
 import path from "node:path"
 import { rm } from "node:fs/promises"
@@ -209,4 +209,8 @@ test("R6: the bytes on disk alone reproduce the saved keybinds after a restart",
       expect(await loadKeybinds()).toEqual(loaded)
     }),
   )
+})
+
+afterAll(() => {
+  console.log("keybind-persist property tests ran: R1, R2, R3, R5, R6 (5 properties, 100 runs each)")
 })
