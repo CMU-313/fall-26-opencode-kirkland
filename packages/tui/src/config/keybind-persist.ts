@@ -1,5 +1,5 @@
 import path from "path"
-import { applyEdits, modify, parse } from "jsonc-parser"
+import { applyEdits, findNodeAtLocation, modify, parse, parseTree } from "jsonc-parser"
 import { Global } from "@opencode-ai/core/global"
 import { writeTextAtomic } from "../util/persistence"
 
@@ -32,6 +32,10 @@ export async function loadKeybinds() {
 
 export async function setKeybind(name: string, value: string | undefined) {
   const current = await readConfig()
+  // jsonc-parser throws when asked to delete a path whose parent does not exist, so
+  // clearing a keybind that was never written must be a no-op rather than an error.
+  const tree = parseTree(current.text)
+  if (value === undefined && (!tree || !findNodeAtLocation(tree, ["keybinds", name]))) return
   await writeTextAtomic(
     current.file,
     applyEdits(
