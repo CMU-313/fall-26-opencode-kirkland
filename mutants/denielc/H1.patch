@@ -1,0 +1,17 @@
+diff --git a/packages/tui/src/config/keybind-persist.ts b/packages/tui/src/config/keybind-persist.ts
+index f1bd444..32d81c3 100644
+--- a/packages/tui/src/config/keybind-persist.ts
++++ b/packages/tui/src/config/keybind-persist.ts
+@@ -6,9 +6,9 @@ import { writeTextAtomic } from "../util/persistence"
+ const SCHEMA = "https://opencode.ai/tui.json"
+ 
+ export async function tuiConfigFile() {
+-  const jsonc = path.join(Global.Path.config, "tui.jsonc")
+-  if (await Bun.file(jsonc).exists()) return jsonc
+-  return path.join(Global.Path.config, "tui.json")
++  const json = path.join(Global.Path.config, "tui.json")
++  if (await Bun.file(json).exists()) return json
++  return path.join(Global.Path.config, "tui.jsonc")
+ }
+ 
+ async function readConfig() {

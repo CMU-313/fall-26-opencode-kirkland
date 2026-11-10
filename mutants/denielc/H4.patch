@@ -1,0 +1,13 @@
+diff --git a/packages/tui/src/config/keybind-persist.ts b/packages/tui/src/config/keybind-persist.ts
+index f1bd444..f6dc7c3 100644
+--- a/packages/tui/src/config/keybind-persist.ts
++++ b/packages/tui/src/config/keybind-persist.ts
+@@ -26,7 +26,7 @@ export async function loadKeybinds() {
+   const keybinds = parsed.keybinds
+   if (!keybinds || typeof keybinds !== "object") return {}
+   return Object.fromEntries(
+-    Object.entries(keybinds).flatMap(([name, value]) => (typeof value === "string" ? [[name, value]] : [])),
++    Object.entries(keybinds).flatMap(([name, value]) => (typeof value === "string" && value !== "none" ? [[name, value]] : [])),
+   )
+ }
+ 

@@ -1,11 +1,13 @@
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test"
 import fc from "fast-check"
 import path from "node:path"
-import { rm } from "node:fs/promises"
+import { chmod, mkdir, rm } from "node:fs/promises"
 import { parse } from "jsonc-parser"
 import { Global } from "@opencode-ai/core/global"
 import { TuiKeybind } from "../../src/config/keybind"
 import { clearKeybind, loadKeybinds, setKeybind, tuiConfigFile } from "../../src/config/keybind-persist"
+
+fc.configureGlobal({ seed: 42 })
 
 const SCHEMA = "https://opencode.ai/tui.json"
 const json = path.join(Global.Path.config, "tui.json")
@@ -13,6 +15,8 @@ const jsonc = path.join(Global.Path.config, "tui.jsonc")
 const decoy = `{ "keybinds": { "decoy": "ctrl+z" } }\n`
 
 async function reset() {
+  await mkdir(Global.Path.config, { recursive: true })
+  await chmod(Global.Path.config, 0o755)
   await rm(json, { force: true })
   await rm(jsonc, { force: true })
 }
@@ -97,6 +101,34 @@ async function fileText() {
   return Bun.file(await tuiConfigFile()).text()
 }
 
+async function disk() {
+  const file = Bun.file(await tuiConfigFile())
+  return (await file.exists()) ? file.text() : undefined
+}
+
+const messy = fc.oneof(
+  fc.constantFrom("", "null", "[]", "42", "true", '"keybinds"').map((text) => ({ text, expected: {} })),
+  fc
+    .constantFrom('"ctrl+x"', "null", "42", "true", "[]")
+    .map((kb) => ({ text: `{ "keybinds": ${kb} }\n`, expected: {} })),
+  fc
+    .tuple(
+      fc.dictionary(name, value, { maxKeys: 4 }),
+      fc.dictionary(
+        name,
+        fc.oneof(fc.integer(), fc.boolean(), fc.constant(null), fc.array(fc.string(), { maxLength: 2 })),
+        {
+          minKeys: 1,
+          maxKeys: 3,
+        },
+      ),
+    )
+    .map(([good, bad]) => ({
+      text: JSON.stringify({ $schema: SCHEMA, keybinds: { ...good, ...bad } }, null, 2) + "\n",
+      expected: Object.fromEntries(Object.entries(good).filter(([k]) => !(k in bad))),
+    })),
+)
+
 function without(obj: Record<string, unknown> | undefined, k: string) {
   return Object.fromEntries(Object.entries(obj ?? {}).filter(([key]) => key !== k))
 }
@@ -126,8 +158,45 @@ test("R5: saving a shortcut then loading it gives back exactly that value", asyn
     fc.asyncProperty(config, name, value, async (cfg, n, v) => {
       await seed(cfg)
       await setKeybind(n, v)
+      const text = await fileText()
       expect((await loadKeybinds())[n]).toBe(v)
-      expect(keybindsOf(parse(await fileText()))[n]).toBe(v)
+      expect(keybindsOf(parse(text))[n]).toBe(v)
+      const entry = `${JSON.stringify(n)}: ${JSON.stringify(v)}`
+      expect(text.split("\n").some((line) => /^ +\S/.test(line) && line.trim().replace(/,$/, "") === entry)).toBe(true)
+    }),
+  )
+})
+
+// R5 (continued): if the save cannot reach the disk, the caller must be told, so the user is
+// never shown a shortcut as saved when the file does not have it. The write is made to fail
+// for real by making the config folder read-only.
+// Kind: invariant
+test("R5: a save that cannot be written is reported and leaves the file as it was", async () => {
+  await fc.assert(
+    fc.asyncProperty(config, name, value, async (cfg, n, v) => {
+      await seed(cfg)
+      const before = await disk()
+      await chmod(Global.Path.config, 0o555)
+      const result = await setKeybind(n, v).then(
+        () => "saved",
+        () => "rejected",
+      )
+      await chmod(Global.Path.config, 0o755)
+      expect(result).toBe("rejected")
+      expect(await disk()).toBe(before)
+    }),
+  )
+})
+
+// R1 (continued): loading must also work on files the user edited by hand. Whatever is in the
+// file, loading returns exactly its string keybinds and never throws.
+// Kind: model / oracle
+test("R1: loading a hand-edited config returns exactly its string keybinds", async () => {
+  await fc.assert(
+    fc.asyncProperty(messy, async (m) => {
+      await reset()
+      await Bun.write(json, m.text)
+      expect(await loadKeybinds()).toEqual(m.expected)
     }),
   )
 })
@@ -202,15 +271,18 @@ test("R6: the bytes on disk alone reproduce the saved keybinds after a restart",
       await seed(cfg)
       await run(ops)
       const file = await tuiConfigFile()
-      const bytes = (await Bun.file(file).exists()) ? await Bun.file(file).text() : undefined
+      const bytes = await disk()
       const loaded = await loadKeybinds()
       await reset()
       if (bytes !== undefined) await Bun.write(file, bytes)
       expect(await loadKeybinds()).toEqual(loaded)
+      await seed(cfg)
+      await run(ops)
+      expect(await disk()).toBe(bytes)
     }),
   )
 })
 
 afterAll(() => {
-  console.log("keybind-persist property tests ran: R1, R2, R3, R5, R6 (5 properties, 100 runs each)")
+  console.log("keybind-persist property tests ran: R1, R2, R3, R5, R6 (7 properties, 100 runs each)")
 })
