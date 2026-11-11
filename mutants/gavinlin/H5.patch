@@ -1,0 +1,11 @@
+diff --git a/packages/opencode/src/session/budget.ts b/packages/opencode/src/session/budget.ts
+index 069725e..66d4aab 100644
+--- a/packages/opencode/src/session/budget.ts
++++ b/packages/opencode/src/session/budget.ts
+@@ -97,5 +97,5 @@ export function describe(hit: Exceeded, action?: Budget["action"]) {
+   // Always says how to continue.
+   return action === "ask"
+     ? `${reached}. Raise it with /budget, or approve continuing when asked.`
+-    : `${reached}. Raise it with /budget, or set budget.action to "ask" to approve continuing.`
++    : `${reached}.`
+ }

@@ -48,3 +48,23 @@ Four properties failed against the code as it stood. All four were code bugs, so
 | R6 | `describe` ended at the numbers and never told the user how to continue, so every stop message was a dead end. Counterexample: `[{tokens:0},0,0,0,"stop"]`. | Code bug | `describe` now takes the configured action and appends how to get going again: raise it with `/budget`, or switch to `"ask"` to approve continuing. |
 
 One existing example test, `warning > stays quiet at or past the limit, where the stop takes over`, asserted the behaviour R5 forbids. It was rewritten as `warning > still fires at or past the limit, so a stop is never silent`, and a second example test was added for the "only once per ceiling" half that the old test was conflating with it.
+
+## Hand-written mutants
+
+Five mutants, written and predicted before Stryker ran and before I had seen anything it
+generates. All five change [`packages/opencode/src/session/budget.ts`](../packages/opencode/src/session/budget.ts),
+and all five are meant to read as acceptable in review: a boundary moved by one character, a
+refactor that quietly drops an argument, a comparison narrowed to one field, a message that
+stops one clause short. The patches are in [`mutants/gavinlin/`](../mutants/gavinlin).
+
+Apply one with `git apply mutants/gavinlin/H1.patch`, run
+`bun test test/session/budget.property.test.ts` from `packages/opencode`, then revert it with
+`git apply -R mutants/gavinlin/H1.patch`.
+
+| ID | Requirement targeted | Change | Predicted killer | Actual result |
+|---|---|---|---|---|
+| H1 | R1 | `check`: the under-limit guard goes from `hit.used < hit.max` to `hit.used <= hit.max`, so usage sitting exactly on the ceiling no longer blocks. This is the "500,000 out of 500,000" case C-4, S-4 and O-4 each raised unprompted. | **R1** ("blocked exactly when usage has reached a ceiling"). Its oracle computes `reached` with `>=`, and `position` generates exactly `1`, so the two disagree on the first budget that lands on its ceiling. **R2**'s second property and **R7** should also fail, since both assert a stop exactly at a ceiling. | *not run yet* |
+| H2 | R2 | `ceiling`: `max + (grant ?? max) * approvals` becomes `max * (approvals + 1)`. Identical when no `grant` is configured, which is what makes it survive a reading; with a `grant` set it silently ignores it and hands back one more whole budget per approval — the exact behaviour R2 was written to replace. | **R2**'s model/oracle property, which rebuilds the ladder independently by adding `grant` once per approval, so it disagrees whenever `grant ≠ max` and `approvals ≥ 1`. I expect **R1** to stay green and miss it: R1's oracle calls `ceiling` itself, so the mutant moves both sides of its comparison equally. | *not run yet* |
+| H3 | R3 | `rearm`: the whole-budget comparison `JSON.stringify(previous) === JSON.stringify(next)` narrows to `previous?.tokens === next?.tokens`. Re-arms on a token edit but not on a cost-only edit — an undo that restores everything except one field. | **R3**'s round-trip property. It generates a second budget, requires it to differ from the first, and then edits away and back; whenever the two differ only in cost (or in `action`/`grant`) the mutant keeps the stale "already warned" marker and the warning never comes back. | *not run yet* |
+| H4 | R5 | `warning`: `worst.ratio < WARNING_RATIO` becomes `<=`, so a session sitting exactly on 80% is never warned. | **Nothing — I think this one survives.** Every property that touches `warning` either preconditions on a warning already existing (R3's round-trip uses `fc.pre(first !== undefined)`, R5 only runs once a stop has happened) or compares two runs that shift together (R3's metamorphic scaling, R8's config round-trip). None of them ever asserts that a warning *is* due at exactly 80%, so moving that boundary is invisible to all nine. | *not run yet* |
+| H5 | R6 | `describe`: the non-`ask` branch returns `` `${reached}.` `` and drops "Raise it with /budget, or set budget.action to..." — the dead-end message R6 was written against, reintroduced for one branch only while the `ask` branch still reads correctly. | **R4/R6** ("every stop message names the limit, shows both numbers, and says how to continue"), which asserts `toContain("/budget")` and generates `action` as `"stop"`, `"ask"` and `undefined`, so two of three generated actions hit the mutated branch. | *not run yet* |

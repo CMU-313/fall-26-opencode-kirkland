@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/budget.ts b/packages/opencode/src/session/budget.ts
+index 069725e..b02b42a 100644
+--- a/packages/opencode/src/session/budget.ts
++++ b/packages/opencode/src/session/budget.ts
+@@ -78,7 +78,7 @@ export function rearm(previous: Budget | undefined, next: Budget | undefined, wa
+ export function warning(input: { budget?: Budget; usage: Usage; approvals?: number; warned?: string }) {
+   const worst = pressure(input)
+   if (!worst) return undefined
+-  if (worst.ratio < WARNING_RATIO) return undefined
++  if (worst.ratio <= WARNING_RATIO) return undefined
+   if (input.warned === key(worst)) return undefined
+   return worst
+ }

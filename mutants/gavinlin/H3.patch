@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/budget.ts b/packages/opencode/src/session/budget.ts
+index 069725e..e6d91fb 100644
+--- a/packages/opencode/src/session/budget.ts
++++ b/packages/opencode/src/session/budget.ts
+@@ -70,7 +70,7 @@ export function key(hit: Exceeded) {
+ // to 2000 and back returns to a ceiling already warned about. Budgets come from
+ // the config decoder, so their key order is stable.
+ export function rearm(previous: Budget | undefined, next: Budget | undefined, warned: string | undefined) {
+-  return JSON.stringify(previous) === JSON.stringify(next) ? warned : undefined
++  return previous?.tokens === next?.tokens ? warned : undefined
+ }
+ 
+ // Due from WARNING_RATIO on, and still due past the limit, so a turn that
