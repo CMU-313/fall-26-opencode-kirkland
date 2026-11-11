@@ -1,0 +1,7 @@
+{
+  "testRunner": "command",
+  "commandRunner": { "command": "bun test test/config/keybind-persist.property.test.ts" },
+  "mutate": ["src/config/keybind-persist.ts:8-52"],
+  "coverageAnalysis": "off",
+  "reporters": ["html", "clear-text", "progress"]
+}
