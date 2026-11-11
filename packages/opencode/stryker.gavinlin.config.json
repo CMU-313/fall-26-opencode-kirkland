@@ -1,0 +1,12 @@
+{
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "bun test test/session/budget.property.test.ts"
+  },
+  "coverageAnalysis": "off",
+  "mutate": ["src/session/budget.ts:30-101"],
+  "reporters": ["clear-text", "progress", "html"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/gavinlin.html"
+  }
+}
