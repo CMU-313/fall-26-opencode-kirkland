@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/auto-model-classify.ts b/packages/opencode/src/session/auto-model-classify.ts
+index 6b52f5f..6704a84 100644
+--- a/packages/opencode/src/session/auto-model-classify.ts
++++ b/packages/opencode/src/session/auto-model-classify.ts
+@@ -229,7 +229,7 @@ function matchKeywords(text: string, keywords: string[]) {
+ }
+ 
+ function tierFor(score: number): Tier {
+-  if (score >= COMPLEX_MIN_SCORE) return "complex"
++  if (score > COMPLEX_MIN_SCORE) return "complex"
+   if (score >= MODERATE_MIN_SCORE) return "moderate"
+   return "simple"
+ }

@@ -299,7 +299,7 @@ test("reset restores the default immediately and reset all clears every override
     editor.app.mockInput.pressKey("r", { ctrl: true, shift: true })
     await wait(() => editor.toast()?.currentToast?.message === "Keyboard shortcuts have been reset to defaults.")
     expect(await loadKeybinds()).toEqual({})
-    expect(editor.app.captureCharFrame()).toContain("ctrl+x a")
+    await wait(() => editor.app.captureCharFrame().includes("ctrl+x a"))
   } finally {
     await editor.cleanup()
   }

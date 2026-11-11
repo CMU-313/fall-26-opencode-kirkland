@@ -1,0 +1,16 @@
+diff --git a/packages/tui/src/config/keybind-persist.ts b/packages/tui/src/config/keybind-persist.ts
+index f1bd444..fdbbeb0 100644
+--- a/packages/tui/src/config/keybind-persist.ts
++++ b/packages/tui/src/config/keybind-persist.ts
+@@ -30,7 +30,11 @@ export async function loadKeybinds() {
+   )
+ }
+ 
++const saved = new Map<string, string | undefined>()
++
+ export async function setKeybind(name: string, value: string | undefined) {
++  if (saved.has(name) && saved.get(name) === value) return // already on disk
++  saved.set(name, value)
+   const current = await readConfig()
+   // jsonc-parser throws when asked to delete a path whose parent does not exist, so
+   // clearing a keybind that was never written must be a no-op rather than an error.

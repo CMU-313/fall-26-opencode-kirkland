@@ -1,0 +1,13 @@
+diff --git a/packages/tui/src/config/keybind-persist.ts b/packages/tui/src/config/keybind-persist.ts
+index f1bd444..b2fdcda 100644
+--- a/packages/tui/src/config/keybind-persist.ts
++++ b/packages/tui/src/config/keybind-persist.ts
+@@ -44,7 +44,7 @@ export async function setKeybind(name: string, value: string | undefined) {
+         formattingOptions: { insertSpaces: true, tabSize: 2 },
+       }),
+     ),
+-  )
++  ).catch(() => {})
+ }
+ 
+ export function clearKeybind(name: string) {

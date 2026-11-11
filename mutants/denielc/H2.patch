@@ -1,0 +1,13 @@
+diff --git a/packages/tui/src/config/keybind-persist.ts b/packages/tui/src/config/keybind-persist.ts
+index f1bd444..0eacc66 100644
+--- a/packages/tui/src/config/keybind-persist.ts
++++ b/packages/tui/src/config/keybind-persist.ts
+@@ -48,7 +48,7 @@ export async function setKeybind(name: string, value: string | undefined) {
+ }
+ 
+ export function clearKeybind(name: string) {
+-  return setKeybind(name, undefined)
++  return setKeybind(name, "none")
+ }
+ 
+ export async function clearAllKeybinds() {
