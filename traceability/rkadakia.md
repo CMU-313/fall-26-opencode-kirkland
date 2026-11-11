@@ -83,3 +83,5 @@ Each mutant is saved as a patch in `mutants/rkadakia/` (H1.patch–H5.patch). Pr
 ## AI use
 
 All eight properties and their generators were drafted with Claude (an AI assistant). I reviewed each one against its requirement, ran them locally, and confirmed they can fail by temporarily changing the downgrade threshold from 3 to 2, which made both R7 properties fail with a shrunk counterexample.
+
+For the hand-written mutants, Claude proposed the five mutants and wrote the prediction for each one (which property should kill it, and why) by reading the classifier, the hysteresis code, and the property generators. All predictions were recorded before any mutant was run. I created the patches myself and then I applied and ran each mutant against the property tests myself; Claude helped me interpret the failing output and shrunk counterexamples. Claude also drafted the Hand-written mutants table and the Mutants it kills column from those results, and I checked them against the actual test output.
