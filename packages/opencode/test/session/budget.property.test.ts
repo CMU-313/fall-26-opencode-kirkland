@@ -4,6 +4,10 @@ import { Schema } from "effect"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionBudget } from "@/session/budget"
 
+// Fixed seed, so a mutant that survives one run survives the next and the
+// mutation score is reproducible.
+fc.configureGlobal({ seed: 42 })
+
 // Generators
 //
 // The budget rules only change behaviour at two points: 80% of a ceiling, and
@@ -276,6 +280,108 @@ describe("session budget properties", () => {
         expect(SessionBudget.warning({ budget: reloaded, usage, approvals: approved })).toEqual(
           SessionBudget.warning({ budget: config, usage, approvals: approved }),
         )
+      }),
+      { numRuns: 500 },
+    )
+  })
+
+  // R5, strengthened after mutation testing. The original R5 property only
+  // asked that a stop come with a warning, so it said nothing about when the
+  // warning starts or which limit it names: moving the 80% boundary, dropping
+  // the ratio guard and removing the sort all survived it. This pins the
+  // boundary and the choice of limit down over the same generators.
+  // Kind: model / oracle
+  test("R5: the warning is due exactly from 80% of the most pressured limit, and names that limit", () => {
+    fc.assert(
+      fc.property(budget, approvals, position, position, (config, approved, costAt, tokensAt) => {
+        const usage = usageAt(config, approved, costAt, tokensAt)
+        const live = [
+          config.cost === undefined
+            ? undefined
+            : {
+                limit: "cost" as const,
+                max: SessionBudget.ceiling(config.cost, approved, config.grant?.cost),
+                used: usage.cost,
+              },
+          config.tokens === undefined
+            ? undefined
+            : {
+                limit: "tokens" as const,
+                max: SessionBudget.ceiling(config.tokens, approved, config.grant?.tokens),
+                used: usage.tokens,
+              },
+        ].filter((candidate) => candidate !== undefined)
+
+        const warn = SessionBudget.warning({ budget: config, usage, approvals: approved })
+        if (live.length === 0) {
+          expect(warn).toBeUndefined()
+          return
+        }
+
+        // A zero ceiling is under maximum pressure: anything reaches it.
+        const ratio = (candidate: (typeof live)[number]) =>
+          candidate.max > 0 ? candidate.used / candidate.max : Infinity
+        // Ties go to cost, which is the order the limits are ranked in.
+        const worst = live.reduce((best, candidate) => (ratio(candidate) > ratio(best) ? candidate : best))
+
+        expect(warn !== undefined).toBe(ratio(worst) >= 0.8)
+        if (warn) {
+          expect(warn.limit).toBe(worst.limit)
+          expect(warn.max).toBe(worst.max)
+        }
+      }),
+      { numRuns: 500 },
+    )
+  })
+
+  // R6, strengthened after mutation testing. The original property only checked
+  // that "/budget" appeared somewhere, so swapping the two branches of the
+  // message survived it. Which instruction the user gets is the point of R6:
+  // "ask" is the only action where an approval prompt is actually coming, so it
+  // is the only one allowed to promise one.
+  // Kind: invariant
+  test("R6: the stop message offers the way to continue that the configured action allows", () => {
+    fc.assert(
+      fc.property(budget, approvals, position, position, action, (config, approved, costAt, tokensAt, act) => {
+        const usage = usageAt(config, approved, costAt, tokensAt)
+        const hit = SessionBudget.check({ budget: config, usage, approvals: approved })
+        fc.pre(hit !== undefined)
+
+        const message = SessionBudget.describe(hit!, act)
+        expect(message.includes("approve continuing when asked")).toBe(act === "ask")
+        expect(message.includes('set budget.action to "ask"')).toBe(act !== "ask")
+      }),
+      { numRuns: 500 },
+    )
+  })
+
+  // R3, strengthened after mutation testing. "Shows again (once)" is once per
+  // ceiling, which only works if the remembered key identifies the ceiling.
+  // Collapsing the key to a constant survived every other property, because
+  // they only ever compare a key against itself.
+  // Kind: invariant
+  test("R3: the warned-ceiling key tells two different ceilings apart", () => {
+    const limit = fc.constantFrom("cost" as const, "tokens" as const)
+    fc.assert(
+      fc.property(limit, limit, tokenLimit, tokenLimit, (limitA, limitB, maxA, maxB) => {
+        const a = { limit: limitA, max: maxA, used: maxA }
+        const b = { limit: limitB, max: maxB, used: maxB }
+        expect(SessionBudget.key(a) === SessionBudget.key(b)).toBe(limitA === limitB && maxA === maxB)
+      }),
+      { numRuns: 500 },
+    )
+  })
+
+  // R1, added after mutation testing. Every other property generates a budget,
+  // so nothing covered the case the config leaves out entirely: with no budget
+  // set there is no cap, and removing the guard that says so went unnoticed.
+  // Kind: invariant
+  test("R1: with no budget configured nothing is blocked and nothing is warned", () => {
+    fc.assert(
+      fc.property(costLimit, tokenLimit, approvals, factor, (cost, tokens, approved, scale) => {
+        const usage = { cost: cost * scale, tokens: tokens * scale }
+        expect(SessionBudget.check({ usage, approvals: approved })).toBeUndefined()
+        expect(SessionBudget.warning({ usage, approvals: approved })).toBeUndefined()
       }),
       { numRuns: 500 },
     )
