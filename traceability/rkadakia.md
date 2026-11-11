@@ -176,6 +176,91 @@ The other 127 survivors aren't equivalent, but I left them alive on purpose:
 - **Inputs no requirement describes (44).** These are directory, image, and `@agent` attachments, value-swap and quoted-literal prompts, questions over 200 characters or with complex keywords, multi-part and synthetic text handling, empty text with attachments, unmatched quotes, and the complex and simple keyword caps. Covering them would mean inventing expected tiers that none of my interviews or requirements specify.
 - **H5 / line 232 (1).** This one comes from R2 not matching the implementation (above).
 
+## Agent failure case
+
+None of my existing properties came from opencode (they were drafted with Claude), so I asked opencode to write a new property for R3. The resulting test is `packages/opencode/test/auto-model/auto-model.opencode.property.test.ts`.
+
+### Transcript excerpt
+
+Share URL: https://opncd.ai/share/7vgquffX
+
+![opencode prompt](rkadakia-opencode-prompt.png)
+![opencode response](rkadakia-opencode-response.png)
+
+Exact prompt given: Read the R3 requirement in traceability/rkadakia.md and the classifier in packages/opencode/src/session/auto-model-classify.ts. Write a fast-check property test for R3 in a new file packages/opencode/test/auto-model/auto-model.opencode.property.test.ts. If you are confused ask me a question don't take too long
+
+It then wrote a working property. Comparing it with my existing R3 property shows it is a near-verbatim copy of `auto-model.property.test.ts`: the same generators, the same comments (including my "Fixed seed so every run (including each Stryker mutant run)…" comment), and even the inputs I had added during strengthening. The only substantive change is the Python traceback length (up to 200 frames instead of 100). The core of the property:
+
+```ts
+test("P plus added context gets a tier >= P's tier", () => {
+  fc.assert(
+    fc.property(basePrompt, fc.array(fc.constantFrom("src/x.ts"), { maxLength: 1 }), addition, (text, files, add) => {
+      const before: Prompt = { text, files }
+      const after = apply(before, add)
+      expect(rank(tierOf(after))).toBeGreaterThanOrEqual(rank(tierOf(before)))
+    }),
+    RUNS,
+  )
+})
+```
+
+### The mutant it let survive
+
+Stryker mutant 212, `auto-model-classify.ts:232` in `tierFor`:
+
+```diff
+- if (score >= COMPLEX_MIN_SCORE) return "complex"
++ if (true) return "complex"
+```
+
+With this mutant **every prompt is classified as complex**, so Auto would always route to the most expensive model, which is the opposite of what interviewees wanted (C-1: "for more direct answer questions I will switch down to Sonnet"). Run alone against this mutant, opencode's property passes (1 pass, 0 fail). My full suite kills it through R2's "every generated factual question is low tier" property.
+
+It isn't the only one. Run alone under Stryker (same seed and mutation range for the classifier), opencode's property scored **8.85%** (20 of 226 killed). All of `tierFor`'s "constant tier" mutants survived: always complex (212), never complex (213), moderate check always true or always false (217, 218), `"simple"` → `""` (222), and the whole body removed (211). Of my hand-written mutants it kills only H3. H1 and H2 (hysteresis) are outside R3's scope, and H4 and H5 target R2.
+
+### Why the property was too weak
+
+It's a **weak oracle**. The property is purely metamorphic: it checks the *relationship* "tier after adding context ≥ tier before" and never checks that either tier is correct. Any classifier that returns the same tier for every input satisfies "after ≥ before" trivially (complex ≥ complex), so the property can't tell a working classifier from a constant one. The agent also didn't reason from R3 at all. It copied the existing property, so it inherited that property's blind spots instead of finding new cases.
+
+### Strengthened version
+
+I kept the metamorphic check and **anchored the starting prompt** to the tier R2 already defines for it. Factual questions must start low, and multi-part design tasks must start high. A constant classifier can't satisfy both anchors. Prompt kinds with no requirement-defined tier stay unanchored. This is still a property over generated inputs, not an example-based test.
+
+```ts
+const basePrompt = fc.oneof(
+  factualQuestion.map((text) => ({ text, expected: "simple" as Tier | undefined })),
+  designTask.map((text) => ({ text, expected: "complex" as Tier | undefined })),
+  identifier.map((x) => ({ text: `fix the typo in ${x}`, expected: undefined })),
+  identifier.map((x) => ({ text: `write unit tests for ${x}`, expected: undefined })),
+  identifier.map((x) => ({ text: `add a retry to ${x}`, expected: undefined })),
+)
+...
+(base, files, add) => {
+  const before: Prompt = { text: base.text, files }
+  const after = apply(before, add)
+  // "after >= before" alone holds for a classifier that returns the same
+  // tier for everything, so anchor the starting point first.
+  if (base.expected) expect(tierOf(before)).toBe(base.expected)
+  expect(rank(tierOf(after))).toBeGreaterThanOrEqual(rank(tierOf(before)))
+}
+```
+
+### Evidence it kills the mutant
+
+| | opencode's version | Strengthened version |
+|---|---|---|
+| Unmutated code | 1 pass | 1 pass |
+| Mutant 212 (`if (true) return "complex"`) | **1 pass: survived** | **1 fail: killed** |
+| Stryker, classifier lines 142–244, seed 42 | 20 / 226 killed (8.85%) | 79 / 226 killed (34.96%) |
+| Hand-written H1–H5 | only H3 killed | only H3 killed |
+
+The strengthened version's failure on mutant 212 (seed 42):
+
+```
+Counterexample: [{"text":"What does git status do?","expected":"simple"},[],{"kind":"code block","value":"```ts\nconst user = await db.get(id)\n```"}]
+```
+
+"What does git status do?" should start low (R2), but the mutant classifies it as complex. The anchor also killed 58 other Stryker mutants that opencode's version let survive, including all the constant-tier `tierFor` mutants listed above.
+
 ## AI use
 
 All eight properties and their generators were drafted with Claude (an AI assistant). I reviewed each one against its requirement, ran them locally, and confirmed they can fail by temporarily changing the downgrade threshold from 3 to 2, which made both R7 properties fail with a shrunk counterexample.
@@ -183,3 +268,5 @@ All eight properties and their generators were drafted with Claude (an AI assist
 For the hand-written mutants, Claude proposed the five mutants and wrote the prediction for each one (which property should kill it, and why) by reading the classifier, the hysteresis code, and the property generators. All predictions were recorded before any mutant was run. I created the patches myself and then I applied and ran each mutant against the property tests myself; Claude helped me interpret the failing output and shrunk counterexamples. Claude also drafted the Hand-written mutants table and the Mutants it kills column from those results, and I checked them against the actual test output.
 
 For Stryker and strengthening, I wrote the Stryker config, and added the fixed seed, but Claude helped me read the Stryker reports, and drafted the comparison and strengthening sections. Claude also wrote the property changes (new generators, the valid-tier assertion, and the quote-wrapping and corrupt-state properties) and the equivalence arguments. While doing this, Claude found that single-step design/refactor prompts get the moderate tier, which conflicts with R2.
+
+For the agent failure case, opencode (Inkling 2 Small) wrote the R3 property. Claude compared it with my existing property, I ran it against my mutants and under Stryker to find the surviving mutant, and Claude wrote the strengthened version, and collected the evidence above.
