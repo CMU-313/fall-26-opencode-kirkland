@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/auto-model-classify.ts b/packages/opencode/src/session/auto-model-classify.ts
+index 6b52f5f..8616c2d 100644
+--- a/packages/opencode/src/session/auto-model-classify.ts
++++ b/packages/opencode/src/session/auto-model-classify.ts
+@@ -130,7 +130,7 @@ const ENUMERATION_PATTERN = /,\s*(?:and|or)\s/i
+ const SEQUENCE_PATTERN = /\b(?:after that|and then|then|also|finally|next)\b/gi
+ const LIST_LINE_PATTERN = /^\s*(?:\d+[.)]|[-*•])\s+\S/gm
+ // JS/Java-style frames ("    at fn (file.ts:12:3)") or a Python traceback header.
+-const STACK_TRACE_PATTERN = /^\s+at\s.*:\d+(?::\d+)?\)?\s*$|\bTraceback\b/m
++const STACK_TRACE_PATTERN = /^\s+at\s.*:\d+(?::\d+)?\)?\s*$/m
+ // Pasted code and stack frames are machine text: frames like "at next (router.js:1:1)" would otherwise read as
+ // sequencing words and keywords. Prose signals ignore them; length and stack-trace detection still see them.
+ const VALUE_SWAP_PATTERN = /\bfrom\s+\d+\S*\s+to\s+\d+/i
