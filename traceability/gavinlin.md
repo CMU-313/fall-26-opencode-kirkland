@@ -19,7 +19,7 @@ All properties live in [`packages/opencode/test/session/budget.property.test.ts`
 
 **Generator choices.** The budget rules only change behaviour at two points — 80% of a ceiling and the ceiling itself — and uniformly random numbers essentially never land on either. So limits are drawn from the round numbers users actually type (0, 1, 1,000, 500,000, 1,000,000 tokens; $0, $0.01, $1, $5, $12.50) and usage is positioned as a *fraction* of the resulting ceiling (0, 0.5, 0.79, 0.8, 0.95, 1, 1.05, 3) instead of being drawn independently. That is the only way to reach "exactly at it, like 500,000 out of 500,000", the case C-4, S-4 and O-4 all raised, and the 0.79/0.8 pair that straddles the warning. Budgets are generated with cost only, tokens only, both, or neither, because only a budget with *both* limits set can reach O-10's complaint of being warned about one limit and stopped by another. Approval counts run 0–4. The scaling factors for the metamorphic property are powers of two, so multiplying a limit or a usage figure by one is exact in binary floating point and the scaled session has bit-for-bit the same ratios.
 
-Properties written or suggested by opencode or another AI tool: R1, R2, R3, R4, R5, R6, R7, R8 — every property and generator in this file was drafted with Claude Code (Opus) from the requirements above, then reviewed, run and triaged by me. The four code fixes below were also made with Claude Code.
+Properties written or suggested by opencode or another AI tool: R1, R2, R3, R4, R5, R6, R7, R8 — every property and generator in this file was drafted with Claude Code (Opus) from the requirements above, then reviewed, run and triaged by me. The four code fixes below were also made with Claude Code. The four properties added in P5 were drafted the same way. Separately, `budget.opencode.property.test.ts` was written by opencode (`anthropic/claude-haiku-4.5`) for the agent failure case below; it is kept as evidence and is not part of the suite the mutation score is measured against.
 
 ## Requirement changes
 
@@ -234,168 +234,188 @@ the strict version skips the first of them — is killed by the strengthened R5 
 - **As Stryker reports it: 96.25%** (77 killed of 80)
 - **Excluding the 3 equivalent mutants: 100%** (77 of 77)
 
+
 ## Agent failure case
 
-The agent here was **Claude Code (Opus)**, not opencode. As the AI-use note above records, every
-property and generator in this file was drafted by it from my requirements table and then reviewed,
-run and triaged by me, so the failure case comes from the properties I actually shipped rather
-than from one written to order afterwards.
+None of the properties I shipped in P4 came from opencode — they were drafted with Claude Code, as
+the AI-use note above records — so I asked opencode to write one now, for R5, and ran my mutants
+against it. It produced a property that passes, looks more thorough than the one it replaced, and
+lets **four of my five hand-written mutants through**, including the one mutant that breaks the
+thing the whole feature exists to prevent.
 
 ### Transcript excerpt
 
-Session "Project 4: Properties & Fixes", November 5, 2026. The prompt that produced the properties
-was the Project 4 brief I pasted in, whose Step 2 is the instruction it worked from:
+Share link: **https://opncd.ai/share/OJfF9Ttu**
 
-> **Step 2: Write Properties for Your Requirements (Individual) (40 pts)**
-> [...]
-> Write property-based tests for at least 4 of your requirements.
-> [...]
-> Put your property tests next to the package's existing tests (e.g.
-> `packages/opencode/test/<feature>/<feature>.property.test.ts`) and run them with `bun test` from
-> inside the package. fast-check works with any test runner; you call `fc.assert(fc.property(...))`
-> inside an ordinary `test(...)` block.
+Model: `anthropic/claude-haiku-4.5` via OpenRouter. Exact prompt:
 
-It then worked straight from the requirements table with no further prompting from me. The
-response that created the file was announced in one line —
+> Read requirement R5 in traceability/gavinlin.md and the session budget code in
+> packages/opencode/src/session/budget.ts. Write one fast-check property test for R5 in a new file
+> packages/opencode/test/session/budget.opencode.property.test.ts. Use bun:test and fast-check.
+> Do not change any other file.
 
-> Now the property test file.
+Its response, abridged (the full session is at the share link):
 
-— followed by a single write of all nine properties. The one it wrote for R5 was:
+> I'll help you create a property test for R5. Let me start by reading the requirement and the
+> budget code.
+>
+> → Read `traceability/gavinlin.md`
+> → Read `src/session/budget.ts`
+>
+> Now I understand the task. R5 states: "A session is never stopped by a limit without first
+> showing the 80% warning for that same limit." [...]
+>
+> → Read `test/session/budget.property.test.ts`
+>
+> Good, there's already a `budget.property.test.ts` file. Let me read it to see what properties
+> already exist:
+>
+> I can see that the property tests for R5 already exist in the file. Looking at lines 194-213 and
+> 294-335, there are actually TWO R5 properties:
+>
+> 1. A weaker one (lines 199-213) - "R5: a stop always comes with the warning for the same limit"
+> 2. A strengthened one (lines 294-335) - "R5: the warning is due exactly from 80% of the most
+>    pressured limit, and names that limit"
+>
+> [...] Let me create a new test file with a single focused property test for R5:
+>
+> ← Write `test/session/budget.opencode.property.test.ts`
+> Wrote file successfully.
+
+I did not point it at my own property file; it went looking and found it. What it then wrote is in
+[`packages/opencode/test/session/budget.opencode.property.test.ts`](../packages/opencode/test/session/budget.opencode.property.test.ts),
+and it is largely my own strengthened oracle copied back to me — the same `usageAt`, the same
+generators, the same `ratio`/`reduce`/`expect(warn !== undefined).toBe(ratio(worst) >= 0.8)`, and
+my comments only lightly reworded ("zero ceiling is maximum pressure", "ties are resolved by
+order (cost first)"). It kept the **weaker** property's title, `"R5: a stop always comes with the
+warning for the same limit"`, on top of the strengthened body, and added a comment claiming the
+property "catches boundary mutations (<=/<), ranking bugs in the sort, zero-ceiling guards, and
+the `find` predicate, all of which the weaker property misses."
+
+The part it wrote itself is the stop half:
 
 ```ts
-  // R5: "A session is never stopped by a limit without first showing the 80%
-  // warning for that same limit." O-10 is the complaint this comes from: being
-  // warned about tokens and then stopped by cost "defeats the purpose of the
-  // warning".
-  // Kind: invariant
-  test("R5: a stop always comes with the warning for the same limit", () => {
-    fc.assert(
-      fc.property(budget, approvals, position, position, (config, approved, costAt, tokensAt) => {
-        const usage = usageAt(config, approved, costAt, tokensAt)
+        // R5: Whenever check reports a stop, warning must be due for the same limit.
         const hit = SessionBudget.check({ budget: config, usage, approvals: approved })
-        fc.pre(hit !== undefined)
-
         const warn = SessionBudget.warning({ budget: config, usage, approvals: approved })
-        expect(warn).toBeDefined()
-        expect(warn!.limit).toBe(hit!.limit)
-        expect(warn!.max).toBe(hit!.max)
-      }),
-      { numRuns: 500 },
-    )
-  })
+
+        if (hit !== undefined) {
+          // A stop occurred. The warning must be due (not just exist, but be due).
+          expect(warn).toBeDefined()
+          // The warning must name the same limit that stopped.
+          expect(warn!.limit).toBe(hit.limit)
+          // The warning must report the same ceiling.
+          expect(warn!.max).toBe(hit.max)
+        }
 ```
 
 ### The mutant it let survive
 
-**H4**, and Stryker's identical twin at line 81, plus five more in the same family:
+**H1**, the off-by-one in `check`:
 
 ```diff
- export function warning(input: { budget?: Budget; usage: Usage; approvals?: number; warned?: string }) {
-   const worst = pressure(input)
-   if (!worst) return undefined
--  if (worst.ratio < WARNING_RATIO) return undefined
-+  if (worst.ratio <= WARNING_RATIO) return undefined
+ export function check(input: { budget?: Budget; usage: Usage; approvals?: number }): Exceeded | undefined {
+   const hit = pressure(input)
+-  if (!hit || hit.used < hit.max) return undefined
++  if (!hit || hit.used <= hit.max) return undefined
+   return { limit: hit.limit, max: hit.max, used: hit.used }
+ }
 ```
 
-A session sitting exactly on 80% of its budget is never warned. This property passed, and so did
-the other eight.
+With H1 applied, a session sitting exactly on its budget is not stopped — "500,000 out of
+500,000" goes through, the case C-4, S-4 and O-4 each raised on their own. opencode's property
+passes anyway. So do H2, H3 and H5. Only H4 dies, and only because that part was copied from me.
+
+| Suite | Mutation score | H1 | H2 | H3 | H4 | H5 |
+|---|---|---|---|---|---|---|
+| opencode's single property | **66.25%** (53/80) | survived | survived | survived | killed | survived |
+| My nine properties | **96.25%** (77/80) | killed | killed | killed | killed | killed |
 
 ### Why the property was too weak
 
-Two things, and the second is the one I would have missed.
+**The stop half is guarded by the behaviour it is supposed to test.** `if (hit !== undefined)`
+only asserts something when `check` already reports a stop. H1's whole effect is to make `check`
+return `undefined` where it should report a stop — so the mutant removes the precondition for its
+own detection, the block is skipped, and the property is silent. The requirement is "a session is
+never stopped **without** the warning", and the property faithfully checks that direction and only
+that direction. Nothing anywhere in it ever asserts that a stop *happens* when usage has reached
+the ceiling, so a budget that silently fails to stop is invisible to it.
 
-**The oracle only ever looks at the region after the stop.** `fc.pre(hit !== undefined)` discards
-every run in which no limit has been reached — that is, every run with a ratio below 1. But R5 is
-a requirement about what happens *before* the stop: "never stopped ... without **first** showing
-the 80% warning". The entire interval the requirement is about, [0.8, 1), is thrown away by the
-precondition before a single assertion runs. The property reads as though it tests the 80% rule
-and in fact never visits 80%.
+What makes this worth recording rather than just wrong is that it is the **same failure as the
+weak property it was asked to replace**, in a different syntax. My original R5 property wrote
+`fc.pre(hit !== undefined)`; opencode wrote `if (hit !== undefined)`. Both condition the
+assertion on the output under test, so both are blind in exactly the region where that output is
+wrong. The agent read the weak property, correctly identified it as the weaker of the two, copied
+the strong half, and then reproduced the original mistake in the half it wrote itself — while
+adding a comment asserting the property catches the mutants it does not catch.
 
-**The generator was not the problem — the precondition was.** This is what makes it a bad property
-rather than a thin one. `position` contains `0.8` exactly; I chose those values in P4 precisely so
-the boundary would be hit, and I wrote a paragraph in this file explaining why. So the input that
-exposes H4 *was* generated, on this very seed, and then filtered out. Reviewing the generator — the
-thing I was proud of — would never have found this.
-
-There is a third, milder issue: after the P4 fix, `check` and `warning` both read the same
-`pressure` function, deliberately, so that they cannot name different limits. That makes
-`expect(warn!.limit).toBe(hit!.limit)` close to a tautology — it asserts that two values derived
-from one source agree. The assertion that mattered in P4 had stopped carrying information by the
-time P5 started, and nothing in the test said so.
+The confident comment is the dangerous part. Nothing in that file reads as a draft: it has a fixed
+seed, boundary-aware generators, an independent oracle and a rationale. A reviewer skimming it
+would see a property that is strictly better than the old one. It is better at the warning and
+no better at the stop, and nothing in the file says so.
 
 ### Strengthened version
 
-Stated over the whole range instead of conditioned on a stop, with the ratio and the chosen limit
-both named explicitly:
+The fix is to assert the stop unconditionally, which is what my R1 property already does — so the
+honest strengthening here is that opencode's property needed the R1 oracle beside it, not a
+tweak to its own guard:
 
 ```ts
-  test("R5: the warning is due exactly from 80% of the most pressured limit, and names that limit", () => {
+  test("R1: a request is blocked exactly when usage has reached a ceiling", () => {
     fc.assert(
       fc.property(budget, approvals, position, position, (config, approved, costAt, tokensAt) => {
         const usage = usageAt(config, approved, costAt, tokensAt)
-        const live = [
-          config.cost === undefined
-            ? undefined
-            : {
-                limit: "cost" as const,
-                max: SessionBudget.ceiling(config.cost, approved, config.grant?.cost),
-                used: usage.cost,
-              },
-          config.tokens === undefined
-            ? undefined
-            : {
-                limit: "tokens" as const,
-                max: SessionBudget.ceiling(config.tokens, approved, config.grant?.tokens),
-                used: usage.tokens,
-              },
-        ].filter((candidate) => candidate !== undefined)
+        const reached =
+          (config.cost !== undefined &&
+            usage.cost >= SessionBudget.ceiling(config.cost, approved, config.grant?.cost)) ||
+          (config.tokens !== undefined &&
+            usage.tokens >= SessionBudget.ceiling(config.tokens, approved, config.grant?.tokens))
 
-        const warn = SessionBudget.warning({ budget: config, usage, approvals: approved })
-        if (live.length === 0) {
-          expect(warn).toBeUndefined()
-          return
-        }
-
-        // A zero ceiling is under maximum pressure: anything reaches it.
-        const ratio = (candidate: (typeof live)[number]) =>
-          candidate.max > 0 ? candidate.used / candidate.max : Infinity
-        // Ties go to cost, which is the order the limits are ranked in.
-        const worst = live.reduce((best, candidate) => (ratio(candidate) > ratio(best) ? candidate : best))
-
-        expect(warn !== undefined).toBe(ratio(worst) >= 0.8)
-        if (warn) {
-          expect(warn.limit).toBe(worst.limit)
-          expect(warn.max).toBe(worst.max)
-        }
+        const hit = SessionBudget.check({ budget: config, usage, approvals: approved })
+        expect(hit !== undefined).toBe(reached)
+        // Whatever it names is a limit that really is at or past its ceiling.
+        if (hit) expect(hit.used).toBeGreaterThanOrEqual(hit.max)
       }),
       { numRuns: 500 },
     )
   })
 ```
 
-There is no `fc.pre` at all now, so no run is discarded: every generated session asserts something
-about `warning`. The oracle rebuilds the ranking from the inputs rather than asking the code what
-it thinks, which is what lets it disagree with the code about *which* limit is under most pressure.
+`expect(hit !== undefined).toBe(reached)` is an equality, not a one-directional implication: it
+fails both when a stop is missing and when one appears early. There is no guard for a mutant to
+switch off.
 
 ### Evidence it kills the mutant
 
-With H4 applied, on the recorded seed:
-
 ```
-$ git apply mutants/gavinlin/H4.patch
-$ bun test test/session/budget.property.test.ts
+$ git apply mutants/gavinlin/H1.patch
+$ bun test test/session/budget.opencode.property.test.ts      # opencode's property
 
-(fail) session budget properties > R5: the warning is due exactly from 80% of the
-       most pressured limit, and names that limit
-error: Property failed after 31 tests
-{ seed: 42, path: "30:2:2:2:2", endOnFailure: true }
-Counterexample: [{"cost":1,"tokens":undefined,"action":"stop","grant":undefined},0,0.8,0]
+ 1 pass
+ 0 fail
 
- 12 pass
- 1 fail
+$ bun test test/session/budget.property.test.ts               # mine
+
+(fail) session budget properties > R1: a request is blocked exactly when usage has reached a ceiling
+error: Property failed after 1 tests
+Counterexample: [{"cost":0,"tokens":undefined,"action":"stop","grant":undefined},0,0,0]
+
+(fail) session budget properties > R2: approving moves the next stop by exactly the granted amount
+(fail) session budget properties > R7: a budget of 0 blocks every request, at any usage and after any approval
+
+ 10 pass
+ 3 fail
 ```
 
-The counterexample is a $1 cost budget with usage at exactly `0.8` of it — $0.80 of $1.00, no
-approvals. The oracle says a warning is due because the ratio is 0.8; the mutant says nothing is
-due. The old R5 property still passes against H4, which is the point: the mutant did not become
-easier to catch, the property became able to see it.
+Same mutant, same seed, same generators. opencode's property reports nothing; the unguarded oracle
+fails on the first case it tries.
+
+### The same failure, earlier, from Claude Code
+
+For completeness, since the AI-use note says every P4 property was drafted with Claude Code: the
+H4 story in [Strengthening](#strengthening) is this same pattern found one step earlier. The
+original R5 property opened with `fc.pre(hit !== undefined)`, which discarded every run where no
+stop had happened — and therefore the whole `[0.8, 1)` interval that R5's "first showing the 80%
+warning" is actually about. The generator was not at fault: `position` contains `0.8` exactly, and
+on seed 42 that input is generated on run 31. The precondition threw away the input that exposes
+the bug. Two agents, two syntaxes, one mistake: conditioning the assertion on the thing under test.
