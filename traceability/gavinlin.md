@@ -205,11 +205,19 @@ return ranked.find((candidate) => candidate.used >= candidate.max) ?? ranked[0]
                   ^ replaced by () => undefined, (candidate) => false, or (candidate) => true
 ```
 
-Each reduces that line to `return ranked[0]`. With `() => undefined` and `=> false` the callback
-is never truthy, so `find` yields `undefined` and `??` falls through to `ranked[0]`; with `=> true`
-`find` returns the first element, which *is* `ranked[0]`. So all three are the program
-`return ranked[0]`, and that program cannot be distinguished from the original. `ranked` is sorted
-by `ratio` descending, and for every candidate `ratio >= 1` holds exactly when `used >= max`:
+Taken one at a time:
+
+- **`find(() => undefined)`** — the callback returns `undefined` for every candidate, so `find`
+  finds nothing and returns `undefined`. The `??` then falls through, and the line is
+  `return ranked[0]`.
+- **`find((candidate) => false)`** — identical in effect to the one above. The predicate is never
+  truthy, `find` returns `undefined`, and the line is `return ranked[0]`.
+- **`find((candidate) => true)`** — the predicate is truthy for the first candidate, so `find`
+  returns `ranked[0]` directly and the `??` never fires. The line is again `return ranked[0]`.
+
+So all three are the same program, `return ranked[0]`, and that program cannot be distinguished
+from the original. `ranked` is sorted by `ratio` descending, and for every candidate `ratio >= 1`
+holds exactly when `used >= max`:
 when `max > 0` because `ratio` is `used / max`, and when `max === 0` because `ratio` is `Infinity`
 while `used >= 0 === max` is always true. So if any candidate satisfies the `find` predicate, the
 one with the greatest ratio satisfies it too — and that is `ranked[0]`. The `find` therefore
