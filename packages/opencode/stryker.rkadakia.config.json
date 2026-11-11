@@ -1,0 +1,15 @@
+{
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "bun test test/auto-model/auto-model.property.test.ts"
+  },
+  "coverageAnalysis": "off",
+  "mutate": [
+    "src/session/auto-model-hysteresis.ts:9-58",
+    "src/session/auto-model-classify.ts:142-244"
+  ],
+  "reporters": ["clear-text", "progress", "html"],
+  "htmlReporter": {
+    "fileName": "reports/mutation/rkadakia.html"
+  }
+}

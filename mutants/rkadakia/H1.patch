@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/auto-model-hysteresis.ts b/packages/opencode/src/session/auto-model-hysteresis.ts
+index ae2513c..e80816f 100644
+--- a/packages/opencode/src/session/auto-model-hysteresis.ts
++++ b/packages/opencode/src/session/auto-model-hysteresis.ts
+@@ -17,7 +17,7 @@ export function next(state: unknown, promptTier: Tier) {
+   if (promptRank === currentRank) return result(reset, prior.tier, "same-tier")
+ 
+   const streakTiers = [...prior.streakTiers, promptTier]
+-  if (streakTiers.length >= DOWNGRADE_AFTER) {
++  if (streakTiers.length > DOWNGRADE_AFTER) {
+     // Step down only as far as the most demanding prompt in the streak required.
+     const tier = TIERS[Math.max(...streakTiers.map((tier) => TIERS.indexOf(tier)))]
+     return result({ tier, streak: 0, streakTiers: [] }, prior.tier, `downgrade-after-${DOWNGRADE_AFTER}`)

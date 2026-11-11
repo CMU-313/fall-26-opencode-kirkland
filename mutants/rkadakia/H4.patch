@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/auto-model-classify.ts b/packages/opencode/src/session/auto-model-classify.ts
+index 6b52f5f..ed29a3a 100644
+--- a/packages/opencode/src/session/auto-model-classify.ts
++++ b/packages/opencode/src/session/auto-model-classify.ts
+@@ -223,7 +223,7 @@ function countSteps(text: string) {
+ 
+ // Whole words or phrases, case-insensitive, with an optional plural "s" ("tests", "migrations").
+ function matchKeywords(text: string, keywords: string[]) {
+-  return keywords.filter((keyword) =>
++  return keywords.slice(0, -1).filter((keyword) =>
+     new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+")}s?\\b`, "i").test(text),
+   )
+ }

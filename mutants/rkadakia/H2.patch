@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/auto-model-hysteresis.ts b/packages/opencode/src/session/auto-model-hysteresis.ts
+index ae2513c..89312c1 100644
+--- a/packages/opencode/src/session/auto-model-hysteresis.ts
++++ b/packages/opencode/src/session/auto-model-hysteresis.ts
+@@ -23,7 +23,7 @@ export function next(state: unknown, promptTier: Tier) {
+     return result({ tier, streak: 0, streakTiers: [] }, prior.tier, `downgrade-after-${DOWNGRADE_AFTER}`)
+   }
+   return result(
+-    { tier: prior.tier, streak: streakTiers.length, streakTiers },
++    { tier: prior.tier, streak: streakTiers.length, streakTiers: prior.streakTiers },
+     prior.tier,
+     `lower-streak:${streakTiers.length}/${DOWNGRADE_AFTER}`,
+   )
