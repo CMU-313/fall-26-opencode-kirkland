@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/budget.ts b/packages/opencode/src/session/budget.ts
+index 069725e..c8ee5a1 100644
+--- a/packages/opencode/src/session/budget.ts
++++ b/packages/opencode/src/session/budget.ts
+@@ -30,7 +30,7 @@ export function total(tokens: Tokens | undefined) {
+ // Approvals add budget.grant of headroom each, or one more whole limit when no
+ // grant is configured.
+ export function ceiling(max: number, approvals: number, grant?: number) {
+-  return max + (grant ?? max) * approvals
++  return max * (approvals + 1)
+ }
+ 
+ // Fraction of a limit consumed before the user is warned.

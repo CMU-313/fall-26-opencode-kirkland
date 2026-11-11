@@ -35,6 +35,7 @@ Caps how much a single OpenCode session is allowed to spend, so the agent stops 
 | `cost`   | Maximum spend in USD for one session                                              |
 | `tokens` | Maximum total tokens for one session, counting input, output, reasoning and cache |
 | `action` | `stop` ends the turn at the limit (default); `ask` requests approval to continue  |
+| `grant`  | How much one approval adds, as `{ "cost": 1.00, "tokens": 100000 }`; defaults to the limit itself |
 
 
 Both limits are optional. If you set both, whichever is reached first stops the session.
@@ -46,8 +47,10 @@ The budget is checked **before every model request**, so the session stops befor
 With `"action": "stop"` the turn ends and the transcript records why:
 
 ```
-Session used 1,012,480 tokens, reaching the configured budget of 1,000,000
+Session used 1,012,480 tokens, reaching the configured budget of 1,000,000. Raise it with /budget, or set budget.action to "ask" to approve continuing.
 ```
+
+Every stop message ends with how to get going again, so it is never a dead end.
 
 With `"action": "ask"` you get a prompt first:
 
@@ -56,7 +59,7 @@ $  Session budget reached
    Used 1,012,480 of 1,000,000 tokens. Continue?
 ```
 
-Approving raises the ceiling by one more budget, so a `1000000` token cap asks again at `2000000` rather than on every subsequent request. Declining ends the turn.
+Approving raises the ceiling by one `grant`, so a `1000000` token cap with `"grant": { "tokens": 100000 }` asks again at `1100000` rather than on every subsequent request. With no `grant` set the ceiling goes up by one more full budget, asking again at `2000000`. Declining ends the turn.
 
 At 80% of the cap you get a warning notification before anything stops, so there is a chance to wrap up or raise the limit:
 
@@ -64,7 +67,9 @@ At 80% of the cap you get a warning notification before anything stops, so there
 Budget warning: 812,480 of 1,000,000 used
 ```
 
-It fires once per ceiling rather than on every request, and fires again after an approval raises the ceiling.
+It fires once per ceiling rather than on every request, and fires again after an approval raises the ceiling or after you change the budget with `/budget`.
+
+A turn that jumps straight past the limit in a single request still gets the warning: it arrives together with the stop rather than being skipped. The warning and the stop always name the same limit, so a session is never warned about tokens and then stopped by cost.
 
 While a budget is set, the sidebar also shows a **Budget** panel with usage against the cap and the percentage used, which turns yellow at 80% and red at 100%.
 

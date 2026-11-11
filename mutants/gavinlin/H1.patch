@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/session/budget.ts b/packages/opencode/src/session/budget.ts
+index 069725e..464b32f 100644
+--- a/packages/opencode/src/session/budget.ts
++++ b/packages/opencode/src/session/budget.ts
+@@ -85,7 +85,7 @@ export function warning(input: { budget?: Budget; usage: Usage; approvals?: numb
+ 
+ export function check(input: { budget?: Budget; usage: Usage; approvals?: number }): Exceeded | undefined {
+   const hit = pressure(input)
+-  if (!hit || hit.used < hit.max) return undefined
++  if (!hit || hit.used <= hit.max) return undefined
+   return { limit: hit.limit, max: hit.max, used: hit.used }
+ }
+ 
