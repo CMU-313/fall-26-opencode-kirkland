@@ -4,6 +4,9 @@ import { classify, TIERS, type Tier } from "../../src/session/auto-model-classif
 import { next } from "../../src/session/auto-model-hysteresis"
 import type { SessionPrompt } from "../../src/session/prompt"
 
+// Fixed seed so every run (including each Stryker mutant run) sees the same generated inputs.
+fc.configureGlobal({ seed: 42 })
+
 type Parts = SessionPrompt.PromptInput["parts"]
 const rank = (t: Tier) => TIERS.indexOf(t)
 const textPart = (text: string) => ({ type: "text" as const, text })
@@ -20,7 +23,9 @@ const RUNS = { numRuns: 500 }
 
 // Real-looking identifiers a developer would ask about. A few contain moderate
 // keywords ("flag", "test") on purpose, so R2 checks that a question stays low
-// even when it mentions something that sounds like work.
+// even when it mentions something that sounds like work. The last three name
+// several work-sounding things at once ("API", "endpoint", "handler"), so a
+// question about them only stays low if repeated keywords don't stack up.
 const identifier = fc.constantFrom(
   "git status",
   "ls -la",
@@ -32,18 +37,26 @@ const identifier = fc.constantFrom(
   "bun test",
   "SessionPrompt.prompt",
   "the .env file",
+  "the API endpoint handler",
+  "the CLI --verbose flag",
+  "the test config",
 )
 
-// Multi-file change requests: the same change applied across 3–5 named files,
-// with the files attached. A naive generator would name one file, which isn't
-// what R2's "change multiple files" means.
+// Multi-file change requests: the same change applied across several files.
+// Users say this two ways, so both are generated: by naming 4–5 files (with the
+// files attached), or with a scope phrase ("everywhere", "across the codebase")
+// and no file list. A naive generator would name one file, which isn't what
+// R2's "change multiple files" means.
 const fileName = fc.constantFrom("src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts")
-const multiFileChange = fc
-  .tuple(
-    fc.constantFrom("update the logging in", "switch the date library in", "add error handling to"),
-    fc.uniqueArray(fileName, { minLength: 4, maxLength: 5 }),
-  )
-  .map(([action, files]) => ({ text: `${action} ${files.join(", ")}`, files }))
+const changeAction = fc.constantFrom("update the logging", "switch the date library", "add error handling")
+const multiFileChange = fc.oneof(
+  fc
+    .tuple(changeAction, fc.uniqueArray(fileName, { minLength: 4, maxLength: 5 }))
+    .map(([action, files]) => ({ text: `${action} in ${files.join(", ")}`, files })),
+  fc
+    .tuple(changeAction, fc.constantFrom("everywhere", "across the codebase", "in all files", "in every file"))
+    .map(([action, scope]) => ({ text: `${action} ${scope}`, files: [] as string[] })),
+)
 
 // Short factual or yes/no questions that don't ask to change code (R2 low tier).
 const factualQuestion = fc
@@ -117,8 +130,25 @@ describe("R1: classifier is deterministic", () => {
     fc.assert(
       fc.property(anyParts, (parts) => {
         const first = classify(parts)
+        // A result with no valid tier can't be routed, and would still pass the
+        // equality checks below because it is wrong the same way every run.
+        expect(TIERS).toContain(first.tier)
         for (let i = 0; i < 10; i++) expect(classify(structuredClone(parts))).toEqual(first)
         expect(classify(parts)).toEqual(first) // classify must not mutate its input
+      }),
+      RUNS,
+    )
+  })
+
+  // `opencode run "<prompt>"` delivers a multi-word prompt wrapped in one pair of
+  // literal quotes. That is the same prompt, so it must get the same tier.
+  // Kind: metamorphic
+  test("wrapping the whole prompt in one pair of quotes doesn't change the tier", () => {
+    fc.assert(
+      fc.property(basePrompt, fc.constantFrom('"', "'"), (prompt, quote) => {
+        expect(classify(toParts(textPart(`${quote}${prompt}${quote}`))).tier).toBe(
+          classify(toParts(textPart(prompt))).tier,
+        )
       }),
       RUNS,
     )
@@ -164,7 +194,7 @@ describe("R2: questions are low tier, design/refactor tasks are high tier", () =
     )
   })
 
-  test("every generated multi-file change request (4+ files) is at least moderate", () => {
+  test("every generated multi-file change request (4+ named files or a codebase-wide scope) is at least moderate", () => {
     fc.assert(
       fc.property(multiFileChange, ({ text, files }) => {
         const tier = classify(toParts(textPart(text), ...files.map((f) => filePart(f)))).tier
@@ -200,9 +230,16 @@ describe("R3: adding context never lowers the tier", () => {
   const jsTrace = fc
     .tuple(errorHeader, fc.array(jsFrame, { minLength: 1, maxLength: 200 }))
     .map(([header, frames]) => [header, ...frames].join("\n"))
+  // Function names include "delete" and "remove": real tracebacks name whatever
+  // function failed, and a frame that happens to read like an instruction is
+  // still pasted machine text, not a request.
   const pyTrace = fc
     .array(
-      fc.tuple(fc.constantFrom("app.py", "models.py"), fc.integer({ min: 1, max: 500 }), fc.constantFrom("load", "save")),
+      fc.tuple(
+        fc.constantFrom("app.py", "models.py"),
+        fc.integer({ min: 1, max: 500 }),
+        fc.constantFrom("load", "save", "delete", "remove"),
+      ),
       { minLength: 1, maxLength: 100 },
     )
     .map((frames) =>
@@ -212,11 +249,20 @@ describe("R3: adding context never lowers the tier", () => {
         "KeyError: 'user_id'",
       ].join("\n"),
     )
+  // Code lines include calls like `list.remove(item)` and `format(...)`: pasted
+  // code uses ordinary identifiers that look like simple-edit words, and they
+  // must not make the request look simpler than it was.
   const codeBlock = fc
-    .array(fc.constantFrom("const user = await db.get(id)", "return user.id", "if (!res.ok) throw err"), {
-      minLength: 1,
-      maxLength: 30,
-    })
+    .array(
+      fc.constantFrom(
+        "const user = await db.get(id)",
+        "return user.id",
+        "if (!res.ok) throw err",
+        "list.remove(item)",
+        "return format(user.createdAt)",
+      ),
+      { minLength: 1, maxLength: 30 },
+    )
     .map((lines) => "```ts\n" + lines.join("\n") + "\n```")
   const extraSteps = fc.constantFrom(
     "and also update the tests and docs",
@@ -341,8 +387,59 @@ describe("R7: two follow-ups stay high, the third drops", () => {
   })
 })
 
+// R7: The hysteresis state lives in session metadata on disk, so it can come back
+// corrupted (hand-edited, truncated, or written by another version). A corrupt
+// state must not hold the session on a stale tier or count a bogus streak: it
+// must behave exactly like a session with no saved state.
+// Kind: invariant
+describe("R7: corrupt saved state behaves like no saved state", () => {
+  // Each branch breaks exactly one rule of a valid state, built so the result is
+  // invalid by construction rather than by re-checking it with the code's own
+  // validation. "complex" is used as the state tier wherever a streak of lower
+  // tiers is needed, since only it has two tiers below it.
+  const lower = fc.constantFrom<Tier>("simple", "moderate")
+  const corruptState = fc.oneof(
+    // not an object at all
+    fc.constantFrom<unknown>(null, 0, "complex", true, []),
+    // tier missing or not a tier name
+    fc.constantFrom<unknown>("ultra", "", "Complex", 2, null).map((tier) => ({ tier, streak: 0, streakTiers: [] })),
+    fc.constant({ streak: 0, streakTiers: [] }),
+    // streak not a non-negative integer below the downgrade threshold
+    fc
+      .tuple(fc.constantFrom<unknown>(-1, 1.5, 3, 4, "1", null), fc.array(lower, { maxLength: 4 }))
+      .map(([streak, streakTiers]) => ({ tier: "complex", streak, streakTiers })),
+    fc.constant({ tier: "complex", streakTiers: [] }),
+    // streakTiers missing or not an array
+    fc.constantFrom<unknown>("simple", null, {}).map((streakTiers) => ({ tier: "complex", streak: 1, streakTiers })),
+    fc.constant({ tier: "complex", streak: 0 }),
+    // streak count disagrees with the recorded streak
+    fc
+      .tuple(fc.integer({ min: 0, max: 2 }), fc.array(lower, { maxLength: 3 }))
+      .filter(([streak, streakTiers]) => streakTiers.length !== streak)
+      .map(([streak, streakTiers]) => ({ tier: "complex", streak, streakTiers })),
+    // streak records something that isn't a tier
+    fc.constantFrom<unknown>("ultra", 1, null).map((bad) => ({ tier: "complex", streak: 1, streakTiers: [bad] })),
+    // streak records a prompt that wasn't lower than the active tier
+    fc.constantFrom(
+      { tier: "simple", streak: 1, streakTiers: ["simple"] },
+      { tier: "moderate", streak: 1, streakTiers: ["complex"] },
+      { tier: "moderate", streak: 2, streakTiers: ["simple", "moderate"] },
+      { tier: "complex", streak: 1, streakTiers: ["complex"] },
+    ),
+  )
+
+  test("next(corrupt, tier) gives the same result as next(undefined, tier)", () => {
+    fc.assert(
+      fc.property(corruptState, tierArb, (state, tier) => {
+        expect(next(state, tier)).toEqual(next(undefined, tier))
+      }),
+      RUNS,
+    )
+  })
+})
+
 // Prints a line in CI logs, which only list failing tests, so the PR's test
 // log shows these properties ran.
 afterAll(() => {
-  console.log("auto-model property tests ran: R1, R2, R3, R7 (8 properties, 500 runs each)")
+  console.log("auto-model property tests ran: R1, R2, R3, R7 (10 properties, 500 runs each)")
 })
