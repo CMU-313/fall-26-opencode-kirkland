@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/permission/index.ts b/packages/opencode/src/permission/index.ts
+index 7d107d4..2b64dc6 100644
+--- a/packages/opencode/src/permission/index.ts
++++ b/packages/opencode/src/permission/index.ts
+@@ -81,7 +81,7 @@ const layer = Layer.effect(
+         yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
+         // Deny rules are checked without the "Allow always" approvals, so a broad approval like "*" can't
+         // unlock a pattern the config or agent denies (for example "*.env", or edits in plan mode).
+-        if (evaluate(request.permission, pattern, ruleset).action === "deny") {
++        if (rule.action === "deny") {
+           return yield* new PermissionV1.DeniedError({
+             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
+           })

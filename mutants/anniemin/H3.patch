@@ -1,0 +1,23 @@
+diff --git a/packages/opencode/src/permission/index.ts b/packages/opencode/src/permission/index.ts
+index 7d107d4..dafa3d7 100644
+--- a/packages/opencode/src/permission/index.ts
++++ b/packages/opencode/src/permission/index.ts
+@@ -32,6 +32,9 @@ interface State {
+   approved: PermissionV1.Rule[]
+ }
+ 
++// Shared by every instance so an "Allow always" isn't lost when an instance reloads.
++const approvedRules: PermissionV1.Rule[] = []
++
+ export function evaluate(permission: string, pattern: string, ...rulesets: PermissionV1.Ruleset[]): PermissionV1.Rule {
+   return (
+     rulesets
+@@ -55,7 +58,7 @@ const layer = Layer.effect(
+         void ctx
+         const state = {
+           pending: new Map<PermissionV1.ID, PendingEntry>(),
+-          approved: [],
++          approved: approvedRules,
+         }
+ 
+         yield* Effect.addFinalizer(() =>

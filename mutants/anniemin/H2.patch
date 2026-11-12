@@ -1,0 +1,17 @@
+diff --git a/packages/opencode/src/permission/index.ts b/packages/opencode/src/permission/index.ts
+index 7d107d4..868b2d9 100644
+--- a/packages/opencode/src/permission/index.ts
++++ b/packages/opencode/src/permission/index.ts
+@@ -91,7 +91,11 @@ const layer = Layer.effect(
+         needsAsk = true
+       }
+ 
+-      if (!needsAsk) return "auto" as const
++      if (!needsAsk) {
++        // Remember auto-approved patterns so the same edit is not re-evaluated next time.
++        if (mode === "allow") approved.push(...request.always.map((pattern) => ({ permission: request.permission, pattern, action: "allow" as const })))
++        return "auto" as const
++      }
+ 
+       const id = request.id ?? PermissionV1.ID.ascending()
+       const info: PermissionV1.Request = {

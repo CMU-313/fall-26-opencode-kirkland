@@ -1,0 +1,13 @@
+diff --git a/packages/opencode/src/permission/index.ts b/packages/opencode/src/permission/index.ts
+index 7d107d4..043bac0 100644
+--- a/packages/opencode/src/permission/index.ts
++++ b/packages/opencode/src/permission/index.ts
+@@ -152,7 +152,7 @@ const layer = Layer.effect(
+       yield* Deferred.succeed(existing.deferred, input.reply)
+       if (input.reply === "once") return
+ 
+-      for (const pattern of existing.info.always) {
++      for (const pattern of existing.info.patterns) {
+         approved.push({
+           permission: existing.info.permission,
+           pattern,
