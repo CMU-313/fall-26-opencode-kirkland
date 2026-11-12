@@ -18,7 +18,12 @@ const env = AppNodeBuilder.build(
   [[InstanceStore.bootstrapNode, noopBootstrap]],
 )
 
+// A fixed seed makes every run generate the same inputs, so Stryker's kill/survive results are repeatable.
+fc.configureGlobal({ seed: 42 })
+
 const sessionID = SessionID.make("session_property")
+const otherSessionID = SessionID.make("session_other")
+const alwaysAsk = { edit_approval: "always" }
 
 // Generators.
 // File names are short lowercase identifiers under a few common directories, so paths look like real
@@ -34,9 +39,16 @@ const secretPath = fc.oneof(
   dir.map((d) => `${d}.env`),
   fc.tuple(dir, name).map(([d, n]) => `${d}${n}.env`),
 )
-// The three modes a user can pick in /permissions, or no mode at all (the config decides). They go through
-// Permission.editMode, the same mapping the server applies to session metadata before every edit.
-const approvalMode = fc.constantFrom("always", "simple", "never", undefined)
+// Session metadata as the TUI stores it: one of the three modes a user can pick in /permissions, a session
+// whose metadata has no mode, or a session with no metadata at all. Both of the last two mean "the config
+// decides". They go through Permission.editMode, the same mapping the server applies before every edit.
+const sessionMetadata = fc.constantFrom<Record<string, unknown> | undefined>(
+  { edit_approval: "always" },
+  { edit_approval: "simple" },
+  { edit_approval: "never" },
+  {},
+  undefined,
+)
 // Config edit rules a project might have. "Always ask" must prompt no matter which one is set.
 const configRules = fc.constantFrom<PermissionV1.Rule[]>(
   [],
@@ -59,27 +71,39 @@ const run = <A, E>(self: Effect.Effect<A, E, Permission.Service | Scope.Scope>) 
     return yield* self.pipe(boot(directory))
   }).pipe(Effect.scoped, Effect.provide(spawner), Effect.runPromise)
 
-// Asks to edit `paths` the way the edit tools do, and answers a prompt with `reply` if one appears.
-// Returns whether the user was prompted, plus how the ask ended.
-const edit = (input: {
+// Asks to edit `paths` the way the edit tools do, and starts it in the background.
+const start = (input: {
+  sessionID: SessionID
   paths: string[]
-  mode: string | undefined
+  session: Record<string, unknown> | undefined
   rules: PermissionV1.Rule[]
-  reply: "once" | "always" | "reject"
 }) =>
   Effect.gen(function* () {
     const permission = yield* Permission.Service
-    const fiber = yield* permission
+    return yield* permission
       .ask({
-        sessionID,
+        sessionID: input.sessionID,
         permission: "edit",
         patterns: input.paths,
         metadata: {},
         always: ["*"],
         ruleset: input.rules,
-        mode: Permission.editMode({ edit_approval: input.mode }),
+        mode: Permission.editMode(input.session),
       })
       .pipe(Effect.exit, Effect.forkScoped)
+  })
+
+// Asks to edit `paths` and answers a prompt with `reply` if one appears.
+// Returns whether the user was prompted, plus how the ask ended.
+const edit = (input: {
+  paths: string[]
+  session: Record<string, unknown> | undefined
+  rules: PermissionV1.Rule[]
+  reply: "once" | "always" | "reject"
+}) =>
+  Effect.gen(function* () {
+    const permission = yield* Permission.Service
+    const fiber = yield* start({ ...input, sessionID })
     const pending = yield* settled(fiber)
     if (pending.length === 0) return { prompted: [], exit: yield* Fiber.join(fiber) }
     yield* permission.reply({ requestID: pending[0].id, reply: input.reply })
@@ -98,11 +122,45 @@ const settled = <A>(fiber: Fiber.Fiber<A>) =>
     }
   }).pipe(Effect.timeout("1 second"), Effect.orDie)
 
+// Waits until exactly `count` prompts are open.
+const waitForPending = (count: number) =>
+  Effect.gen(function* () {
+    const permission = yield* Permission.Service
+    while (true) {
+      const pending = yield* permission.list()
+      if (pending.length === count) return pending
+      yield* Effect.sleep("1 millis")
+    }
+  }).pipe(Effect.timeout("1 second"), Effect.orDie)
+
+// Starts one ask per path at the same time, the way a model's parallel tool calls arrive, while another
+// session also has a prompt open. Answers the first of this session's prompts with `reply`, records which
+// prompts are still open, then rejects those so every ask can finish.
+const parallel = (input: { paths: string[]; rules: PermissionV1.Rule[]; reply: "always" | "reject" }) =>
+  Effect.gen(function* () {
+    const permission = yield* Permission.Service
+    const other = yield* start({ sessionID: otherSessionID, paths: ["src/other.ts"], session: alwaysAsk, rules: [] })
+    const fibers = yield* Effect.forEach(input.paths, (path) =>
+      start({ sessionID, paths: [path], session: alwaysAsk, rules: input.rules }),
+    )
+    const pending = yield* waitForPending(input.paths.length + 1)
+    const first = pending.find((item) => item.sessionID === sessionID)
+    if (!first) throw new Error("no prompt for this session")
+    yield* permission.reply({ requestID: first.id, reply: input.reply })
+    const open = yield* permission.list()
+    for (const item of open) yield* permission.reply({ requestID: item.id, reply: "reject" })
+    yield* Fiber.join(other)
+    return { open, exits: yield* Effect.forEach(fibers, Fiber.join) }
+  })
+
 // R2: Switching from Always ask to Never ask and back to Always ask leaves the session in Always ask, with no
 // approvals carried over from the Never ask period.
 // Kind: round-trip
 // Generates any sequence of mode switches that ends back in Always ask, with edits in between. Prompts in
 // between are answered "once" or "reject", never "always": Allow always is meant to carry over (R5, R6).
+// Every step is checked too, so a switch that silently lands in the wrong mode is caught where it happens:
+// Never ask never prompts, while Always ask and Simple changes only always reach the user. (The server asks
+// for every Simple changes only edit; the TUI then auto-approves the small ones.)
 test("R2: returning to Always ask prompts on the next edit", async () => {
   const step = fc.record({ mode: fc.constantFrom("always", "simple", "never"), path: safePath })
   await fc.assert(
@@ -115,13 +173,18 @@ test("R2: returning to Always ask prompts on the next edit", async () => {
       async (rules, first, steps, reply, next) => {
         const result = await run(
           Effect.gen(function* () {
-            const before = yield* edit({ paths: [first], mode: "always", rules, reply: "once" })
-            for (const item of steps) yield* edit({ paths: [item.path], mode: item.mode, rules, reply })
-            const after = yield* edit({ paths: [next], mode: "always", rules, reply: "once" })
-            return { before, after }
+            const before = yield* edit({ paths: [first], session: alwaysAsk, rules, reply: "once" })
+            const between = yield* Effect.forEach(steps, (item) =>
+              edit({ paths: [item.path], session: { edit_approval: item.mode }, rules, reply }),
+            )
+            const after = yield* edit({ paths: [next], session: alwaysAsk, rules, reply: "once" })
+            return { before, between, after }
           }),
         )
         expect(result.before.prompted).toHaveLength(1)
+        expect(result.between.map((item) => item.prompted.length)).toEqual(
+          steps.map((item) => (item.mode === "never" ? 0 : 1)),
+        )
         expect(result.after.prompted).toHaveLength(1)
         expect(result.after.exit).toEqual(Exit.succeed("once"))
       },
@@ -133,35 +196,53 @@ test("R2: returning to Always ask prompts on the next edit", async () => {
 // R4: No approval mode and no Allow always choice overrides a deny rule. A denied edit is never written,
 // regardless of mode.
 // Kind: invariant
-// Generates every approval mode, with and without an earlier Allow always, with and without plan mode's
-// deny rules, against both secret and safe paths.
+// Generates every approval mode (and sessions with no mode), with and without an earlier Allow always, with
+// and without plan mode's deny rules. A request holds one to four files, like apply_patch; when it includes
+// a secret path, that path can be at any position, so a check that only looks at one file is caught.
+// The config also has a non-edit rule, so the deny error must name only the edit rules that applied.
 test("R4: deny rules win over every mode and Allow always", async () => {
-  const config = Permission.fromConfig({ edit: { "*": "allow", "*.env": "deny" } })
+  const config = Permission.fromConfig({ bash: "allow", edit: { "*": "allow", "*.env": "deny" } })
   const plan = Permission.fromConfig({ edit: { "*": "deny", ".opencode/plans/*.md": "allow" } })
+  const request = fc
+    .record({
+      safe: fc.array(safePath, { maxLength: 3 }),
+      secret: fc.option(secretPath, { nil: undefined }),
+      at: fc.nat(),
+    })
+    .filter((item) => item.safe.length > 0 || item.secret !== undefined)
+    .map((item) =>
+      item.secret === undefined
+        ? { paths: item.safe, secret: false }
+        : { paths: item.safe.toSpliced(item.at % (item.safe.length + 1), 0, item.secret), secret: true },
+    )
   await fc.assert(
     fc.asyncProperty(
-      approvalMode,
+      sessionMetadata,
       fc.boolean(),
       fc.boolean(),
-      fc.oneof(
-        secretPath.map((path) => ({ path, secret: true })),
-        safePath.map((path) => ({ path, secret: false })),
-      ),
-      async (mode, approvedAlways, planMode, target) => {
+      request,
+      async (session, approvedAlways, planMode, target) => {
         const rules = planMode ? [...config, ...plan] : config
         const result = await run(
           Effect.gen(function* () {
-            if (approvedAlways) yield* edit({ paths: ["src/a.ts"], mode: "always", rules: config, reply: "always" })
-            return yield* edit({ paths: [target.path], mode, rules, reply: "once" })
+            if (approvedAlways) yield* edit({ paths: ["src/a.ts"], session: alwaysAsk, rules: config, reply: "always" })
+            return yield* edit({ paths: target.paths, session, rules, reply: "once" })
           }),
         )
         if (target.secret || planMode) {
           expect(result.prompted).toHaveLength(0)
-          expect(Exit.isFailure(result.exit) && Cause.squash(result.exit.cause)).toBeInstanceOf(
-            PermissionV1.DeniedError,
+          const error = Exit.isFailure(result.exit) ? Cause.squash(result.exit.cause) : undefined
+          expect(error).toBeInstanceOf(PermissionV1.DeniedError)
+          expect(error instanceof PermissionV1.DeniedError && error.ruleset).toEqual(
+            rules.filter((rule) => rule.permission === "edit"),
           )
           return
         }
+        // Nothing is denied, so the mode decides: Always ask and Simple changes only prompt unless Allow
+        // always was chosen; Never ask and no mode fall through to the config's "*": "allow".
+        const mode = session?.edit_approval
+        const asks = !approvedAlways && (mode === "always" || mode === "simple")
+        expect(result.prompted).toHaveLength(asks ? 1 : 0)
         expect(Exit.isSuccess(result.exit)).toBe(true)
       },
     ),
@@ -183,10 +264,10 @@ test("R5: Allow always does not survive a restart", async () => {
         const result = await Effect.gen(function* () {
           const directory = yield* tmpdirScoped()
           const before = yield* Effect.gen(function* () {
-            for (const path of approved) yield* edit({ paths: [path], mode: "always", rules, reply: "always" })
-            return yield* edit({ paths: [next], mode: "always", rules, reply: "once" })
+            for (const path of approved) yield* edit({ paths: [path], session: alwaysAsk, rules, reply: "always" })
+            return yield* edit({ paths: [next], session: alwaysAsk, rules, reply: "once" })
           }).pipe(boot(directory))
-          const after = yield* edit({ paths: [next], mode: "always", rules, reply: "once" }).pipe(boot(directory))
+          const after = yield* edit({ paths: [next], session: alwaysAsk, rules, reply: "once" }).pipe(boot(directory))
           return { before, after }
         }).pipe(Effect.scoped, Effect.provide(spawner), Effect.runPromise)
         expect(result.before.prompted).toHaveLength(0)
@@ -212,10 +293,10 @@ test("R6: adding files to a change never adds prompts", async () => {
       fc.constantFrom("once" as const, "reject" as const),
       async (rules, files, extra, reply) => {
         const more = files.includes(extra) ? files : [...files, extra]
-        const single = (paths: string[]) => run(edit({ paths, mode: "always", rules, reply }))
+        const single = (paths: string[]) => run(edit({ paths, session: alwaysAsk, rules, reply }))
         const separate = (paths: string[]) =>
           run(
-            Effect.forEach(paths, (path) => edit({ paths: [path], mode: "always", rules, reply: "always" })).pipe(
+            Effect.forEach(paths, (path) => edit({ paths: [path], session: alwaysAsk, rules, reply: "always" })).pipe(
               Effect.map((results) => results.flatMap((result) => result.prompted)),
             ),
           )
@@ -228,6 +309,32 @@ test("R6: adding files to a change never adds prompts", async () => {
           if (reply === "reject") expect(Exit.isFailure(result.exit)).toBe(true)
           expect(await separate(paths)).toHaveLength(1)
         }
+      },
+    ),
+    { numRuns: 50 },
+  )
+}, 60_000)
+
+// R6 (separate calls in parallel): models often issue several edit tool calls at once, so all of their
+// prompts are open together. Answering the first one settles the rest of that session's prompts the same way,
+// with no further prompt, and leaves another session's open prompt alone.
+// Kind: metamorphic
+// Generates one to five files edited in parallel and either reply. Changing how many files are edited never
+// changes how many prompts the user answers (one), and every edit ends the way that one answer said.
+test("R6: one answer settles every parallel edit in the session", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      configRules,
+      fc.uniqueArray(safePath, { minLength: 1, maxLength: 5 }),
+      fc.constantFrom("always" as const, "reject" as const),
+      async (rules, files, reply) => {
+        const result = await run(parallel({ paths: files, rules, reply }))
+        expect(result.open.map((item) => item.sessionID)).toEqual([otherSessionID])
+        if (reply === "always") {
+          expect(result.exits).toEqual(files.map(() => Exit.succeed("always")))
+          return
+        }
+        expect(result.exits.every((exit) => Exit.isFailure(exit))).toBe(true)
       },
     ),
     { numRuns: 50 },

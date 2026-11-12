@@ -1,0 +1,23 @@
+{
+  "testRunner": "command",
+  "commandRunner": {
+    "command": "bun test test/permission/approval.property.test.ts"
+  },
+  "coverageAnalysis": "off",
+  "mutate": [
+    "src/permission/index.ts:35-45",
+    "src/permission/index.ts:74-117",
+    "src/permission/index.ts:119-177",
+    "src/permission/index.ts:211-216"
+  ],
+  "reporters": [
+    "clear-text",
+    "progress",
+    "html"
+  ],
+  "htmlReporter": {
+    "fileName": "reports/mutation/anniemin.html"
+  },
+  "timeoutMS": 60000,
+  "concurrency": 4
+}
