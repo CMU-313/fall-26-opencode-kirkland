@@ -79,7 +79,9 @@ const layer = Layer.effect(
       for (const pattern of request.patterns) {
         const rule = evaluate(request.permission, pattern, ruleset, approved)
         yield* Effect.logInfo("evaluated", { permission: request.permission, pattern, action: rule })
-        if (rule.action === "deny") {
+        // Deny rules are checked without the "Allow always" approvals, so a broad approval like "*" can't
+        // unlock a pattern the config or agent denies (for example "*.env", or edits in plan mode).
+        if (evaluate(request.permission, pattern, ruleset).action === "deny") {
           return yield* new PermissionV1.DeniedError({
             ruleset: ruleset.filter((rule) => Wildcard.match(request.permission, rule.permission)),
           })
