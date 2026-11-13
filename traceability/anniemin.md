@@ -12,7 +12,7 @@
 | R5 | C-7, O-5, O-6: "Each time you open a new ide or window it makes sense for it to ask again" | Allow always lasts only until opencode restarts. It does not persist across a restart. | In Always ask, choose Allow always on an edit. The next edit in that session is applied without a prompt and shows approved (always). Quit opencode, restart it and reopen the session. The next edit shows the approval prompt. | No | After any set of Allow always approvals, the next edit is auto-approved before a restart and prompts after it (invariant) | `packages/opencode/test/permission/approval.property.test.ts`: "R5: Allow always does not survive a restart" | H3, H4 |
 | R6 | S-15, S-16: "If it's going to change two files, does the user have to approve twice? … I'd prefer to approve once" | A single tool call that changes several files is approved or rejected as a whole, with one prompt. When the changes arrive as separate tool calls, choosing Allow always on the first approves the rest without another prompt. | With a GPT model in Always ask, an apply_patch that changes a.ts and b.ts shows exactly one prompt listing 2 files. Allow once writes both files, and Reject leaves both unchanged. With a non-GPT model, the agent edits a.ts and then b.ts. Choosing Allow always on the a.ts prompt applies the b.ts edit with no second prompt. | Yes | Adding a file to a change never adds prompts, for a single call, for separate calls, and for parallel calls settled by one answer (metamorphic) | `packages/opencode/test/permission/approval.property.test.ts`: "R6: adding files to a change never adds prompts", "R6: one answer settles every parallel edit in the session" | H3, H4 |
 
-Properties written or suggested by opencode or another AI tool: R2, R4, R5, R6 (written with Claude Code, then reviewed and run by me)
+Properties written or suggested by opencode or another AI tool: R2, R4, R5, R6 (written with Claude Code, then reviewed and run by me). Separately, the first test in `packages/opencode/test/permission/approval.opencode.property.test.ts` was written by opencode (Nemotron 3.5 Lightning via OpenRouter) for the agent failure case below; the second test in that file is my strengthened version of it.
 
 ## Requirement changes
 
@@ -102,3 +102,84 @@ Eleven of the 25 survivors are equivalent: no test can kill them, because nothin
 **Final mutation score**
 - As Stryker reports it: **75.49%** (77 detected out of 102 mutants).
 - With the 11 equivalent mutants excluded: **84.6%** (77 detected out of 91).
+
+## Agent failure case
+
+None of my properties came from opencode (they were written with Claude Code, as noted above), so I asked opencode to write one for R4. I tried twice. Model: Nemotron 3.5 Lightning (free) via OpenRouter, in opencode's Build agent.
+
+### Attempt 1: opencode copied my property
+
+Share link: https://opncd.ai/share/Iqdx5HrI (screenshots: [prompt](anniemin-opencode-attempt1-prompt.png), [response](anniemin-opencode-attempt1-response.png))
+
+> Read requirement R4 in traceability/anniemin.md and the permission service in packages/opencode/src/permission/index.ts. Write one fast-check property test for R4 in a new file packages/opencode/test/permission/approval.opencode.property.test.ts. Use bun:test and fast-check, and fix the fast-check seed to 42. Do not change any other file. don't take too long.
+
+opencode read the traceability file and the permission service, then globbed `test/permission/`, read my existing `approval.property.test.ts`, and wrote back my already-strengthened R4 property almost line for line, comments removed. It killed every R4 mutant (H1, H3, H5), but only because it *was* my property. That doesn't work as a failure case. Still, it's worth recording: given an existing test nearby, the agent reproduced it instead of reasoning about the requirement.
+
+### Attempt 2: opencode's own property
+
+Share link: **https://opncd.ai/share/4yOrLoye** (screenshots: [prompt](anniemin-opencode-prompt.png), [response](anniemin-opencode-response.png))
+
+> Read requirement R4 in traceability/anniemin.md and the permission service in packages/opencode/src/permission/index.ts. Write one fast-check property test for R4 in a new file packages/opencode/test/permission/approval.opencode.property.test.ts. Use bun:test and fast-check, and fix the fast-check seed to 42. Do not read, open or copy packages/opencode/test/permission/approval.property.test.ts or anything under mutants/; write the property and generators yourself. You may look at packages/opencode/test/permission/next.test.ts for how to set up the Permission service. Do not change any other file. don't take too long on this
+
+opencode read the requirement, the service and `next.test.ts`, grepped for existing fast-check use, and then read the attempt-1 file it had written before (`approval.opencode.property.test.ts`, which my prompt didn't rule out). So it reused the setup helpers and path generators, but the property itself is new. This is its core, as written:
+
+```ts
+test("R4: deny rules win over every mode and Allow always", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      sessionMetadata,
+      fc.boolean(),
+      fc.oneof(safePath, secretPath),
+      async (session, approvedAlways, path) => {
+        const rules = configDenyEnv
+        const result = await run(
+          Effect.gen(function* () {
+            if (approvedAlways && path !== "src/a.ts" && path !== "src/b.ts") {
+              yield* edit({ paths: ["src/a.ts"], session: alwaysAsk, rules, reply: "always" })
+            }
+            return yield* edit({ paths: [path], session, rules, reply: "once" })
+          }),
+        )
+        if (isSecretPath(path)) {
+          expect(result.prompted).toHaveLength(0)
+          const error = Exit.isFailure(result.exit) ? Cause.squash(result.exit.cause) : undefined
+          expect(error).toBeInstanceOf(PermissionV1.DeniedError)
+          return
+        }
+        // Non-secret path: should not be denied by the *.env rule
+        expect(Exit.isFailure(result.exit)).toBe(false)
+      },
+    ),
+    { numRuns: 200 },
+  )
+}, 120_000)
+```
+
+### The mutant it let survive
+
+It passes on the real code and kills H1 (shrunk to `[{edit_approval: "always"}, true, "a.env"]`), but **H5 survives**. H5 is the R4 mutant where `ask` checks deny rules against `request.patterns[0]` instead of each file, so a multi-file `apply_patch` can write a denied `.env` as long as the first file is allowed. (H2, H3 and H4 survive as well, but they target R2, R5 and R6, which an R4 property isn't expected to catch.)
+
+| Mutant | opencode's property | Strengthened property |
+|---|---|---|
+| H1 (R4) | Killed | Killed, `[{edit_approval: "always"}, true, [".env"]]` |
+| H5 (R4) | **Survived** (200 runs, seed 42) | **Killed**, `[{edit_approval: "always"}, false, ["a.ts", ".env"]]` |
+
+### Why the property was too weak
+
+**The generator never reaches the bug.** `fc.oneof(safePath, secretPath)` produces exactly one path, and the edit is always `paths: [path]`, so `request.patterns[0]` *is* the path being checked and H5's change is invisible. R4's own acceptance criteria are about single files, which makes a one-path generator look complete. But the code it tests receives a list of files, and `apply_patch` really does send several at once. opencode modelled the requirement's example instead of the input space of the function. Two smaller weaknesses: it never turns on plan mode, which R4 names explicitly ("in plan mode under all three modes"), and for safe paths it only checks that the edit didn't fail. That last check is close to a weak oracle, since it doesn't check whether the user was prompted.
+
+### Strengthened version and evidence
+
+The second test in [`approval.opencode.property.test.ts`](../packages/opencode/test/permission/approval.opencode.property.test.ts), "R4 (strengthened): a denied file anywhere in a request denies the whole request", keeps opencode's assertions and changes only the generator. Each request holds one to four files, and when a secret path is included, `fc.nat()` places it at any position:
+
+```ts
+const request = fc
+  .record({ safe: fc.array(safePath, { maxLength: 3 }), secret: fc.option(secretPath, { nil: undefined }), at: fc.nat() })
+  .filter((item) => item.safe.length > 0 || item.secret !== undefined)
+  .map((item) =>
+    item.secret === undefined ? item.safe : item.safe.toSpliced(item.at % (item.safe.length + 1), 0, item.secret),
+  )
+// ...and the secret check becomes: if (paths.some(isSecretPath)) { ...expect DeniedError... }
+```
+
+Evidence: with `git apply mutants/anniemin/H5.patch`, `bun test test/permission/approval.opencode.property.test.ts` reports opencode's test passing and the strengthened test failing with the counterexample `[{edit_approval: "always"}, false, ["a.ts", ".env"]]`: a two-file request whose second file is `.env` is allowed instead of denied. Without the mutant, both tests pass. My main R4 property in `approval.property.test.ts` uses the same multi-file generator, plus plan mode and exact prompt counts (see Strengthening).
